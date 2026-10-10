@@ -32,5 +32,5 @@ jobs:
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: mehra-player-release-apk
+        name: mehra-player-apk
         path: build/app/outputs/flutter-apk/app-release.apk
