@@ -107,8 +107,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   }
 
   Future<String> getOutputDir() async {
-    final home = Platform.environment['USERPROFILE'] ?? 'C:';
-    final dir = Directory('$home\\Downloads\\MehraPlayer');
+    final home = Platform.isWindows ? (Platform.environment['USERPROFILE'] ?? 'C:') : '/storage/emulated/0/Download';
+    final dir = Directory('$home/MehraPlayer');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -215,7 +215,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     showMsg("Aspect Ratio: $fitLabel");
   }
 
-  // --- Subtitles Menu ---
   void openSubtitleMenu() {
     showModalBottomSheet(
       context: context,
@@ -248,67 +247,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 }
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.cloud_download, color: Colors.greenAccent),
-              title: const Text('Online Subtitle Download'),
-              onTap: () {
-                Navigator.pop(ctx);
-                openOnlineSubDialog();
-              },
-            ),
           ],
         ),
       ),
     );
   }
 
-  void openOnlineSubDialog() {
-    final activeList = isAudioMode ? audioList : videoList;
-    final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
-    final searchCtrl = TextEditingController(
-      text: currentFile != null ? currentFile.path.split(Platform.pathSeparator).last.split('.').first : "",
-    );
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Download Online Subtitles'),
-        content: TextField(
-          controller: searchCtrl,
-          decoration: const InputDecoration(hintText: 'Movie/Video Title ya .srt URL'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final query = searchCtrl.text.trim();
-              if (query.isEmpty) return;
-              final outDir = await getOutputDir();
-              final outPath = '$outDir\\sub_${DateTime.now().millisecondsSinceEpoch}.srt';
-              showMsg("Subtitles fetch ho rahe hain...");
-              if (query.startsWith('http')) {
-                final client = HttpClient();
-                final req = await client.getUrl(Uri.parse(query));
-                final resp = await req.close();
-                await resp.pipe(File(outPath).openWrite());
-                await player.setSubtitleTrack(SubtitleTrack.uri(outPath));
-                showMsg("Online Subtitle Attached!");
-              } else {
-                final res = await Process.run('yt-dlp', [
-                  '--write-auto-sub', '--sub-lang', 'en,hi', '--convert-subs', 'srt',
-                  '--skip-download', '-o', '$outDir\\%(title)s.%(ext)s', 'ytsearch1:$query'
-                ]);
-                showMsg(res.exitCode == 0 ? "Subtitles Saved in MehraPlayer folder" : "Subtitle search complete");
-              }
-            },
-            child: const Text('Download'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- YouTube Downloader Dialog ---
   void openDownloadDialog() {
     final urlCtrl = TextEditingController();
     showDialog(
@@ -343,7 +287,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     if (url.isEmpty) return;
     final outDir = await getOutputDir();
     final filename = 'dl_${DateTime.now().millisecondsSinceEpoch}.${isAudio ? "mp3" : "mp4"}';
-    final outPath = '$outDir\\$filename';
+    final outPath = Platform.isWindows ? '$outDir\\$filename' : '$outDir/$filename';
     showMsg("Downloading shuru hui...");
 
     List<String> args = isAudio
@@ -366,7 +310,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     }
   }
 
-  // --- Trim & Cut Dialog ---
   void openTrimDialog() {
     final activeList = isAudioMode ? audioList : videoList;
     final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
@@ -403,7 +346,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               onPressed: () async {
                 Navigator.pop(ctx);
                 final outDir = await getOutputDir();
-                final outPath = '$outDir\\clip_${DateTime.now().millisecondsSinceEpoch}.mp4';
+                final filename = 'clip_${DateTime.now().millisecondsSinceEpoch}.mp4';
+                final outPath = Platform.isWindows ? '$outDir\\$filename' : '$outDir/$filename';
                 showMsg("Cutting clip... Please wait");
                 final res = await Process.run('ffmpeg', [
                   '-ss', '${startVal.toInt()}',
@@ -428,13 +372,13 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     );
   }
 
-  // --- Video to MP3 Conversion ---
   Future<void> extractMp3() async {
     final activeList = isAudioMode ? audioList : videoList;
     final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
     if (currentFile == null) return;
     final outDir = await getOutputDir();
-    final outPath = '$outDir\\audio_${DateTime.now().millisecondsSinceEpoch}.mp3';
+    final filename = 'audio_${DateTime.now().millisecondsSinceEpoch}.mp3';
+    final outPath = Platform.isWindows ? '$outDir\\$filename' : '$outDir/$filename';
     showMsg("Video se MP3 nikal raha hai...");
 
     final res = await Process.run('ffmpeg', [
@@ -453,13 +397,13 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     }
   }
 
-  // --- Screenshot Tool ---
   Future<void> takeScreenshot() async {
     final activeList = isAudioMode ? audioList : videoList;
     final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
     if (currentFile == null) return;
     final outDir = await getOutputDir();
-    final outPath = '$outDir\\screenshot_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final filename = 'screenshot_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outPath = Platform.isWindows ? '$outDir\\$filename' : '$outDir/$filename';
     showMsg("Screenshot save ho raha hai...");
 
     final res = await Process.run('ffmpeg', [
@@ -482,6 +426,139 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     return "$minutes:$seconds";
   }
 
+  Widget _buildPlayerContent(FileSystemEntity? currentFile, String currentTitle) {
+    if (currentFile == null) {
+      return const Center(
+        child: Text("Neeche Library se Video ya Song play karein", style: TextStyle(color: Colors.white54, fontSize: 16)),
+      );
+    }
+
+    if (isAudioMode) {
+      return Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            colors: [Colors.deepPurple.withOpacity(0.45), Colors.black],
+            radius: 1.1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedBuilder(
+              animation: visualizerController,
+              builder: (context, child) {
+                double scale = isPlaying ? 1.0 + (visualizerController.value * 0.08) : 1.0;
+                return Transform.scale(
+                  scale: scale,
+                  child: Container(
+                    width: 160,
+                    height: 160,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFF1E1E28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.deepPurpleAccent.withOpacity(0.6),
+                          blurRadius: 28,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                      border: Border.all(color: Colors.white24, width: 3),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.music_note, size: 70, color: Colors.cyanAccent),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                currentTitle,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              dolbyAtmos ? "Dolby Audio 3D Surround Enabled" : "High-Fidelity Audio Mode",
+              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (ambientLight)
+          Container(
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.deepPurpleAccent.withOpacity(0.45),
+                  blurRadius: 70,
+                  spreadRadius: 30,
+                ),
+              ],
+            ),
+          ),
+        ColorFiltered(
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(1.0 - brightness),
+            BlendMode.darken,
+          ),
+          child: Video(
+            controller: controller,
+            controls: NoVideoControls,
+            fit: currentFit,
+          ),
+        ),
+        if (!isLocked) ...[
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: MediaQuery.of(context).size.width * 0.35,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTap: () => player.seek(position - const Duration(seconds: 10)),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: MediaQuery.of(context).size.width * 0.35,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTap: () => player.seek(position + const Duration(seconds: 10)),
+            ),
+          ),
+        ],
+        if (isLocked)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: FloatingActionButton.small(
+              backgroundColor: Colors.redAccent.withOpacity(0.8),
+              child: const Icon(Icons.lock),
+              onPressed: () {
+                setState(() => isLocked = false);
+                showMsg("Screen Unlocked");
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeList = isAudioMode ? audioList : videoList;
@@ -501,12 +578,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
             IconButton(
               icon: const Icon(Icons.subtitles),
-              tooltip: 'Subtitles (Online / Local .srt)',
+              tooltip: 'Subtitles',
               onPressed: openSubtitleMenu,
             ),
             IconButton(
               icon: const Icon(Icons.download),
-              tooltip: 'YouTube / Web Downloader',
+              tooltip: 'Download Media',
               onPressed: openDownloadDialog,
             ),
             IconButton(
@@ -516,12 +593,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
             IconButton(
               icon: Icon(ambientLight ? Icons.blur_on : Icons.blur_off, color: ambientLight ? Colors.amberAccent : Colors.grey),
-              tooltip: 'Ambient Light Glow',
+              tooltip: 'Ambient Light',
               onPressed: () => setState(() => ambientLight = !ambientLight),
             ),
             IconButton(
               icon: Icon(Icons.surround_sound, color: dolbyAtmos ? Colors.cyanAccent : Colors.grey),
-              tooltip: 'Dolby Sound Boost',
+              tooltip: 'Dolby Boost',
               onPressed: toggleDolby,
             ),
             IconButton(
@@ -548,140 +625,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         ),
         body: Column(
           children: [
-            // Upper Player Area
             Expanded(
               flex: 5,
-              child: currentFile == null
-                  ? const Center(child: Text("Neeche Library se Video ya Song play karein", style: TextStyle(color: Colors.white54, fontSize: 16)))
-                  : isAudioMode
-                      // Animated Music Visualizer View
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          gradient: RadialGradient(
-                            colors: [Colors.deepPurple.withOpacity(0.45), Colors.black],
-                            radius: 1.1,
-                          ),
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            AnimatedBuilder(
-                              animation: visualizerController,
-                              builder: (context, child) {
-                                double scale = isPlaying ? 1.0 + (visualizerController.value * 0.08) : 1.0;
-                                return Transform.scale(
-                                  scale: scale,
-                                  child: Container(
-                                    width: 160,
-                                    height: 160,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: const Color(0xFF1E1E28),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.deepPurpleAccent.withOpacity(0.6),
-                                          blurRadius: 28,
-                                          spreadRadius: 4,
-                                        ),
-                                      ],
-                                      border: Border.all(color: Colors.white24, width: 3),
-                                    ),
-                                    child: const Center(
-                                      child: Icon(Icons.music_note, size: 70, color: Colors.cyanAccent),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 16),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
-                              child: Text(
-                                currentTitle,
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              dolbyAtmos ? "Dolby Audio 3D Surround Enabled" : "High-Fidelity Audio Mode",
-                              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      )
-                      // Video Player with Ambient Glow
-                      Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (ambientLight)
-                            Container(
-                              decoration: BoxDecoration(
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.deepPurpleAccent.withOpacity(0.45),
-                                    blurRadius: 70,
-                                    spreadRadius: 30,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ColorFiltered(
-                            colorFilter: ColorFilter.mode(
-                              Colors.black.withOpacity(1.0 - brightness),
-                              BlendMode.darken,
-                            ),
-                            child: Video(
-                              controller: controller,
-                              controls: NoVideoControls,
-                              fit: currentFit,
-                            ),
-                          ),
-                          if (!isLocked) ...[
-                            // Double Tap: Left -10s
-                            Positioned(
-                              left: 0,
-                              top: 0,
-                              bottom: 0,
-                              width: MediaQuery.of(context).size.width * 0.35,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent,
-                                onDoubleTap: () => player.seek(position - const Duration(seconds: 10)),
-                              ),
-                            ),
-                            // Double Tap: Right +10s
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              bottom: 0,
-                              width: MediaQuery.of(context).size.width * 0.35,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.translucent,
-                                onDoubleTap: () => player.seek(position + const Duration(seconds: 10)),
-                              ),
-                            ),
-                          ],
-                          if (isLocked)
-                            Positioned(
-                              top: 16,
-                              left: 16,
-                              child: FloatingActionButton.small(
-                                backgroundColor: Colors.redAccent.withOpacity(0.8),
-                                child: const Icon(Icons.lock),
-                                onPressed: () {
-                                  setState(() => isLocked = false);
-                                  showMsg("Screen Unlocked");
-                                },
-                              ),
-                            ),
-                        ],
-                      ),
+              child: _buildPlayerContent(currentFile, currentTitle),
             ),
-
-            // Middle Seek Bar & Controls
             if (!isLocked)
               Container(
                 color: const Color(0xFF131318),
@@ -728,7 +675,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                         ),
                       ],
                     ),
-                    // Action Buttons: Trim, Video to Audio, Screenshot, Speed
                     Padding(
                       padding: const EdgeInsets.only(top: 4.0, bottom: 2.0),
                       child: Wrap(
@@ -776,8 +722,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                   ],
                 ),
               ),
-
-            // Lower Media Library Tabs
             Container(
               color: const Color(0xFF171720),
               child: const TabBar(
