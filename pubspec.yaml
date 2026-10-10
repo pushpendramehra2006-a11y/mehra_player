@@ -1,0 +1,23 @@
+name: mehra_player
+description: A video and audio player desktop app.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^8.0.0
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_windows_video: ^1.0.11
+  receive_sharing_intent: ^1.9.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
