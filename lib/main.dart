@@ -16,7 +16,7 @@ class MehraApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Mehra Player Pro',
+      title: 'Mehra Player',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF09090C),
@@ -569,7 +569,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Mehra Player Pro', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.bold)),
           actions: [
             IconButton(
               icon: Icon(isLocked ? Icons.lock : Icons.lock_open, color: isLocked ? Colors.redAccent : Colors.white),
