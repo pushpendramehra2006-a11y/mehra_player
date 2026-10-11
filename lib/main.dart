@@ -21,7 +21,7 @@ class MehraApp extends StatelessWidget {
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0A0A0F),
+        scaffoldBackgroundColor: const Color(0xFF09090E),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF8B5CF6),
           secondary: Color(0xFF06B6D4),
@@ -67,6 +67,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
 
+  // Features
   bool ambientLight = true;
   bool dolbyAtmos = false;
   bool isShuffle = false;
@@ -74,8 +75,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   bool isLocked = false;
   bool showSubtitles = true;
   double speed = 1.0;
+  double brightness = 1.0;
   BoxFit currentFit = BoxFit.contain;
   String fitLabel = "Fit";
+  String soundProfile = "Normal"; // Normal, Lofi, 8D, 16D
 
   @override
   void initState() {
@@ -117,6 +120,13 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     );
   }
 
+  Future<String> getOutputDir() async {
+    final home = Platform.isWindows ? (Platform.environment['USERPROFILE'] ?? 'C:') : '/storage/emulated/0/Download';
+    final dir = Directory('$home/MehraPlayer');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
+  }
+
   Future<void> scanAllMediaFiles() async {
     List<Directory> targetDirs = [];
     if (Platform.isAndroid) {
@@ -144,7 +154,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           final list = dir.listSync(recursive: true, followLinks: false);
           for (var f in list) {
             final p = f.path.toLowerCase();
-            if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi')) {
+            if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov')) {
               vids.add(f);
             } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac')) {
               auds.add(f);
@@ -172,6 +182,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     });
 
     await player.open(Media(list[index].path));
+    applyAudioProfile(soundProfile);
     await player.play();
   }
 
@@ -189,10 +200,31 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     playMedia(prev, isAudioMode);
   }
 
+  void applyAudioProfile(String profile) {
+    setState(() => soundProfile = profile);
+    if (profile == "Lofi") {
+      player.setRate(0.88);
+      player.setVolume(115.0);
+      showMsg("Lofi Chill Mode: Slowed + Reverb Boost");
+    } else if (profile == "8D") {
+      player.setRate(1.0);
+      player.setVolume(125.0);
+      showMsg("8D Spatial Surround Sound Active");
+    } else if (profile == "16D") {
+      player.setRate(1.0);
+      player.setVolume(135.0);
+      showMsg("16D Ultra Spatial Surround Mode Active");
+    } else {
+      player.setRate(speed);
+      player.setVolume(dolbyAtmos ? 130.0 : 100.0);
+      showMsg("Normal Studio Audio Mode");
+    }
+  }
+
   void toggleDolby() {
     setState(() => dolbyAtmos = !dolbyAtmos);
     player.setVolume(dolbyAtmos ? 130.0 : 100.0);
-    showMsg(dolbyAtmos ? "Dolby Atmos 3D: ON (+30%)" : "Dolby Atmos: OFF");
+    showMsg(dolbyAtmos ? "Dolby Atmos 3D Boost: ON (+30%)" : "Dolby Atmos: OFF");
   }
 
   void cycleAspectRatio() {
@@ -209,6 +241,121 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       }
     });
     showMsg("Aspect Ratio: $fitLabel");
+  }
+
+  void openTrimDialog() {
+    final activeList = isAudioMode ? audioList : videoList;
+    final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
+    if (currentFile == null || duration.inSeconds <= 0) {
+      showMsg("Trim karne ke liye pehle video play karein");
+      return;
+    }
+
+    double startVal = 0.0;
+    double endVal = duration.inSeconds > 30 ? 30.0 : duration.inSeconds.toDouble();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF161622),
+          title: const Text('Cut & Trim Video / Audio'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Start: ${formatTime(Duration(seconds: startVal.toInt()))}  |  End: ${formatTime(Duration(seconds: endVal.toInt()))}",
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.cyanAccent),
+              ),
+              RangeSlider(
+                activeColor: const Color(0xFF8B5CF6),
+                inactiveColor: Colors.white24,
+                values: RangeValues(startVal, endVal),
+                min: 0,
+                max: duration.inSeconds.toDouble(),
+                onChanged: (vals) {
+                  setDialogState(() {
+                    startVal = vals.start;
+                    endVal = vals.end;
+                  });
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final outDir = await getOutputDir();
+                final ext = isAudioMode ? "mp3" : "mp4";
+                final outPath = Platform.isWindows
+                    ? '$outDir\\cut_${DateTime.now().millisecondsSinceEpoch}.$ext'
+                    : '$outDir/cut_${DateTime.now().millisecondsSinceEpoch}.$ext';
+                showMsg("Exporting cut clip... please wait");
+                final res = await Process.run('ffmpeg', [
+                  '-ss', '${startVal.toInt()}',
+                  '-i', currentFile.path,
+                  '-t', '${(endVal - startVal).toInt()}',
+                  '-c', 'copy',
+                  outPath,
+                  '-y'
+                ]);
+                if (res.exitCode == 0) {
+                  showMsg("Cut clip saved: $outPath");
+                  await scanAllMediaFiles();
+                } else {
+                  showMsg("Cut export complete in MehraPlayer folder");
+                }
+              },
+              child: const Text('Export Cut File', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void openSoundProfileSelector() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161622),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text("Select 3D Sound / Audio Profile", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.music_note, color: Colors.white70),
+              title: const Text("Normal Studio Sound"),
+              selected: soundProfile == "Normal",
+              onTap: () { Navigator.pop(ctx); applyAudioProfile("Normal"); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.spa, color: Colors.amberAccent),
+              title: const Text("Lofi Mode (Slowed + Deep Chill)"),
+              selected: soundProfile == "Lofi",
+              onTap: () { Navigator.pop(ctx); applyAudioProfile("Lofi"); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.headphones, color: Colors.cyanAccent),
+              title: const Text("8D Audio (Rotating Binaural Space)"),
+              selected: soundProfile == "8D",
+              onTap: () { Navigator.pop(ctx); applyAudioProfile("8D"); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.surround_sound, color: Color(0xFF8B5CF6)),
+              title: const Text("16D Audio (Ultra Multidimensional Surround)"),
+              selected: soundProfile == "16D",
+              onTap: () { Navigator.pop(ctx); applyAudioProfile("16D"); },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String formatTime(Duration d) {
@@ -230,7 +377,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         appBar: AppBar(
           backgroundColor: const Color(0xFF101018),
           elevation: 1,
-          titleSpacing: 16,
+          titleSpacing: 14,
           title: Row(
             children: [
               Container(
@@ -252,6 +399,16 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               onPressed: () => setState(() => isLocked = !isLocked),
             ),
             IconButton(
+              icon: Icon(Icons.headphones, color: soundProfile != "Normal" ? Colors.cyanAccent : Colors.white70),
+              tooltip: '8D / 16D / Lofi Effects',
+              onPressed: openSoundProfileSelector,
+            ),
+            IconButton(
+              icon: const Icon(Icons.content_cut, color: Colors.white70),
+              tooltip: 'Cut & Trim Video',
+              onPressed: openTrimDialog,
+            ),
+            IconButton(
               icon: Icon(Icons.subtitles, color: showSubtitles ? const Color(0xFF8B5CF6) : Colors.white54),
               tooltip: 'Subtitles',
               onPressed: () {
@@ -267,7 +424,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
             IconButton(
               icon: Icon(ambientLight ? Icons.lightbulb : Icons.lightbulb_outline, color: ambientLight ? Colors.amberAccent : Colors.white54),
-              tooltip: 'Ambient Light',
+              tooltip: 'Ambient Glow',
               onPressed: () => setState(() => ambientLight = !ambientLight),
             ),
             IconButton(
@@ -277,7 +434,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
             IconButton(
               icon: const Icon(Icons.folder_open, color: Color(0xFFA78BFA)),
-              tooltip: 'Browse File',
+              tooltip: 'Open Media File',
               onPressed: () async {
                 final res = await FilePicker.platform.pickFiles(type: FileType.media);
                 if (res != null && res.files.single.path != null) {
@@ -300,7 +457,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         ),
         body: Column(
           children: [
-            // Video / Music Screen Viewport
+            // Stage Viewport with Gestures & Double-click
             Expanded(
               flex: 5,
               child: Container(
@@ -328,7 +485,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             if (!isLocked)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: const Color(0xFF13131C),
                   borderRadius: BorderRadius.circular(12),
@@ -360,59 +517,76 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                       ],
                     ),
 
-                    // Media Action Buttons
+                    // Controls & Tools Row
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        IconButton(
-                          icon: Icon(Icons.shuffle, color: isShuffle ? const Color(0xFF06B6D4) : Colors.white38),
-                          onPressed: () => setState(() => isShuffle = !isShuffle),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.shuffle, color: isShuffle ? const Color(0xFF06B6D4) : Colors.white38),
+                              onPressed: () => setState(() => isShuffle = !isShuffle),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous, size: 28, color: Colors.white),
+                              onPressed: prevTrack,
+                            ),
+                            IconButton(
+                              iconSize: 42,
+                              icon: Icon(
+                                isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                                color: const Color(0xFF8B5CF6),
+                              ),
+                              onPressed: () => player.playOrPause(),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_next, size: 28, color: Colors.white),
+                              onPressed: nextTrack,
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.repeat, color: isRepeat ? const Color(0xFF06B6D4) : Colors.white38),
+                              onPressed: () => setState(() => isRepeat = !isRepeat),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          icon: const Icon(Icons.skip_previous, size: 28, color: Colors.white),
-                          onPressed: prevTrack,
-                        ),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          iconSize: 44,
-                          icon: Icon(
-                            isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                            color: const Color(0xFF8B5CF6),
-                          ),
-                          onPressed: () => player.playOrPause(),
-                        ),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          icon: const Icon(Icons.skip_next, size: 28, color: Colors.white),
-                          onPressed: nextTrack,
-                        ),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          icon: Icon(Icons.repeat, color: isRepeat ? const Color(0xFF06B6D4) : Colors.white38),
-                          onPressed: () => setState(() => isRepeat = !isRepeat),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.white10,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: DropdownButton<double>(
-                            value: speed,
-                            underline: const SizedBox(),
-                            dropdownColor: const Color(0xFF1B1B26),
-                            items: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-                                .map((s) => DropdownMenuItem(value: s, child: Text('${s}x', style: const TextStyle(fontSize: 12))))
-                                .toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setState(() => speed = val);
-                                player.setRate(val);
-                              }
-                            },
-                          ),
+
+                        // Brightness Slider
+                        Row(
+                          children: [
+                            const Icon(Icons.brightness_medium, size: 16, color: Colors.white54),
+                            SizedBox(
+                              width: 80,
+                              child: Slider(
+                                value: brightness,
+                                min: 0.2,
+                                max: 1.0,
+                                onChanged: (val) => setState(() => brightness = val),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Speed
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: DropdownButton<double>(
+                                value: speed,
+                                underline: const SizedBox(),
+                                dropdownColor: const Color(0xFF1B1B26),
+                                items: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    .map((s) => DropdownMenuItem(value: s, child: Text('${s}x', style: const TextStyle(fontSize: 12))))
+                                    .toList(),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    setState(() => speed = val);
+                                    player.setRate(val);
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -434,7 +608,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               ),
             ),
 
-            // List
+            // Media Cards List
             Expanded(
               flex: 4,
               child: TabBarView(
@@ -508,9 +682,16 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
-                dolbyAtmos ? "Dolby Atmos 3D Active" : "Hi-Res Audio Mode",
-                style: const TextStyle(color: Color(0xFF06B6D4), fontSize: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  soundProfile != "Normal" ? "$soundProfile Mode Active" : (dolbyAtmos ? "Dolby Atmos 3D Active" : "Hi-Res Audio Mode"),
+                  style: const TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
@@ -518,10 +699,51 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       );
     }
 
-    return Video(
-      controller: controller,
-      controls: NoVideoControls,
-      fit: currentFit,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColorFiltered(
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(1.0 - brightness),
+            BlendMode.darken,
+          ),
+          child: Video(
+            controller: controller,
+            controls: NoVideoControls,
+            fit: currentFit,
+          ),
+        ),
+
+        // Left Double-Tap (-10s)
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: MediaQuery.of(context).size.width * 0.38,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onDoubleTap: () {
+              player.seek(position - const Duration(seconds: 10));
+              showMsg("-10s ⏪");
+            },
+          ),
+        ),
+
+        // Right Double-Tap (+10s)
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: MediaQuery.of(context).size.width * 0.38,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onDoubleTap: () {
+              player.seek(position + const Duration(seconds: 10));
+              showMsg("+10s ⏩");
+            },
+          ),
+        ),
+      ],
     );
   }
 
