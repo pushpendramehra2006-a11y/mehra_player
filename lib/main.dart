@@ -355,14 +355,15 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-      void _showDownloaderDialog() {
+        void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
     String selectedQuality = "1080p";
     String selectedAudioQuality = "320 kbps";
     bool isDownloading = false;
     double downloadProgress = 0.0;
-    String progressText = "Starting download...";
+    int progressPercent = 0;
+    String progressSubtitle = "";
 
     final List<String> videoQualities = ["8K", "4K", "1080p", "720p", "480p"];
     final List<String> audioQualities = ["320 kbps", "192 kbps", "128 kbps"];
@@ -373,12 +374,19 @@ class _MainTabScreenState extends State<MainTabScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
           title: Row(
-            children: const [
-              Icon(Icons.bolt_rounded, color: Color(0xFF00E676), size: 26),
-              SizedBox(width: 8),
-              Text("Turbo Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E676).withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.downloadING_rounded, color: Color(0xFF00E676), size: 24),
+              ),
+              const SizedBox(width: 10),
+              const Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
             ],
           ),
           content: SingleChildScrollView(
@@ -393,11 +401,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     hintText: "Paste video/audio link here...",
                     hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
                     filled: true,
-                    fillColor: Colors.black26,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    fillColor: Colors.black38,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 const Text("Format:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 Row(
@@ -455,16 +463,34 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   }).toList(),
                 ),
                 if (isDownloading) ...[
-                  const SizedBox(height: 16),
-                  LinearProgressIndicator(
-                    value: downloadProgress > 0.0 ? downloadProgress : null,
-                    color: const Color(0xFF00E676),
-                    backgroundColor: Colors.white12,
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "$progressPercent%",
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF00E676)),
+                      ),
+                      Text(
+                        progressSubtitle,
+                        style: const TextStyle(fontSize: 11.5, color: Colors.white70),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    progressText,
-                    style: const TextStyle(fontSize: 11.5, color: Colors.cyanAccent),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      tween: Tween<double>(begin: 0, end: downloadProgress),
+                      builder: (context, value, _) => LinearProgressIndicator(
+                        value: value > 0.0 ? value : null,
+                        minHeight: 7,
+                        color: const Color(0xFF00E676),
+                        backgroundColor: Colors.white12,
+                      ),
+                    ),
                   ),
                 ]
               ],
@@ -477,28 +503,32 @@ class _MainTabScreenState extends State<MainTabScreen> {
                 child: const Text("Cancel"),
               ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00E676),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              ),
               onPressed: isDownloading
                   ? null
                   : () async {
                       final u = urlController.text.trim();
                       if (u.isEmpty || !u.startsWith("http")) {
-                        _showMsg("Please enter a valid HTTP/HTTPS link!");
+                        _showMsg("Please enter a valid video/audio link!");
                         return;
                       }
 
                       setDialogState(() {
                         isDownloading = true;
-                        progressText = "Connecting to fast stream server...";
+                        downloadProgress = 0.01;
+                        progressPercent = 1;
+                        progressSubtitle = "Connecting...";
                       });
 
                       try {
                         final dir = await _getAppDir(downloadType == "mp4");
                         final tag = downloadType == "mp4" ? selectedQuality : selectedAudioQuality.replaceAll(' ', '');
-                        final filePath = "$dir/Download_${tag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                        final filePath = "$dir/Mehra_${tag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
                         final file = File(filePath);
 
-                        // High-speed Chunk Stream with Browser Headers
                         final request = http.Request('GET', Uri.parse(u))
                           ..headers.addAll({
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -518,24 +548,30 @@ class _MainTabScreenState extends State<MainTabScreen> {
                             (chunk) {
                               sink.add(chunk);
                               receivedBytes += chunk.length;
-                              if (totalBytes > 0) {
-                                setDialogState(() {
-                                  downloadProgress = receivedBytes / totalBytes;
-                                  final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+                              setDialogState(() {
+                                final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+                                if (totalBytes > 0) {
+                                  downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
+                                  progressPercent = (downloadProgress * 100).toInt();
                                   final mbTotal = (totalBytes / (1024 * 1024)).toStringAsFixed(1);
-                                  final pct = (downloadProgress * 100).toInt();
-                                  progressText = "Downloading: $mbDone MB / $mbTotal MB ($pct%)";
-                                });
-                              } else {
-                                setDialogState(() {
-                                  final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
-                                  progressText = "Downloaded: $mbDone MB (Streaming...)";
-                                });
-                              }
+                                  progressSubtitle = "$mbDone MB / $mbTotal MB";
+                                } else {
+                                  // Estimated smooth progress animation if server omits Content-Length
+                                  downloadProgress = ((downloadProgress + 0.02).clamp(0.05, 0.95));
+                                  progressPercent = (downloadProgress * 100).toInt();
+                                  progressSubtitle = "$mbDone MB downloaded";
+                                }
+                              });
                             },
                             onDone: () async {
                               await sink.close();
                               client.close();
+                              setDialogState(() {
+                                downloadProgress = 1.0;
+                                progressPercent = 100;
+                                progressSubtitle = "Completed!";
+                              });
+                              await Future.delayed(const Duration(milliseconds: 400));
                               Navigator.pop(ctx);
                               _showMsg("Downloaded successfully: ${file.path.split(Platform.pathSeparator).last}");
                               await _scanStorage();
@@ -550,14 +586,17 @@ class _MainTabScreenState extends State<MainTabScreen> {
                           ).asFuture();
                         } else {
                           setDialogState(() => isDownloading = false);
-                          _showMsg("Server returned status ${response.statusCode}. Link may be protected.");
+                          _showMsg("Server returned code ${response.statusCode}. Stream link expired.");
                         }
                       } catch (e) {
                         setDialogState(() => isDownloading = false);
                         _showMsg("Connection Error: $e");
                       }
                     },
-              child: Text(isDownloading ? "Downloading..." : "Start Fast Download", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: Text(
+                isDownloading ? "Downloading $progressPercent%..." : "Download Now",
+                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
@@ -1440,5 +1479,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
