@@ -355,12 +355,12 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-            void _showDownloaderDialog() {
+              void _showDownloaderDialog() {
     final urlController = TextEditingController();
-    String downloadType = "mp4";
-    List<String> detectedVideoQualities = ["Detecting..."];
+    String downloadType = "mp4"; // mp4, mp3, zip, torrent
+    List<String> detectedVideoQualities = ["Auto Best", "1080p", "720p", "480p"];
     List<String> detectedAudioQualities = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
-    String selectedQuality = "Best Available";
+    String selectedQuality = "Auto Best";
     String selectedAudioEffect = "Standard MP3";
     bool isDetecting = false;
     bool isDownloading = false;
@@ -373,55 +373,14 @@ class _MainTabScreenState extends State<MainTabScreen> {
       barrierDismissible: !isDownloading,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
-          Future<void> detectSourceQuality(String u) async {
-            if (u.isEmpty || !u.startsWith("http")) return;
-            setDialogState(() {
-              isDetecting = true;
-              detectedVideoQualities = ["Analyzing Stream..."];
-            });
-
-            try {
-              final uri = Uri.parse(u);
-              final req = http.Request('HEAD', uri)
-                ..headers.addAll({
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  'Accept': '*/*',
-                });
-              final streamedResponse = await req.send().timeout(const Duration(seconds: 5));
-              
-              List<String> dynamicList = [];
-              final host = uri.host.toLowerCase();
-
-              if (host.contains("instagram.com") || host.contains("cdninstagram")) {
-                dynamicList = ["1080p (Max)", "720p", "480p"];
-              } else if (host.contains("facebook.com") || host.contains("fbcdn")) {
-                dynamicList = ["1080p HD", "720p HD", "SD (480p)"];
-              } else if (host.contains("tiktok") || host.contains("douyin")) {
-                dynamicList = ["1080p HD", "720p HD"];
-              } else if (host.contains("youtube") || host.contains("youtu.be")) {
-                dynamicList = ["Auto Best", "1080p", "720p", "480p", "360p"];
-              } else {
-                final cLength = streamedResponse.contentLength ?? 0;
-                if (cLength > 200 * 1024 * 1024) {
-                  dynamicList = ["4K UHD", "1080p HD", "720p"];
-                } else if (cLength > 40 * 1024 * 1024) {
-                  dynamicList = ["1080p HD", "720p", "480p"];
-                } else {
-                  dynamicList = ["720p", "480p", "360p"];
-                }
-              }
-
-              setDialogState(() {
-                detectedVideoQualities = dynamicList;
-                selectedQuality = dynamicList.first;
-                isDetecting = false;
-              });
-            } catch (_) {
-              setDialogState(() {
-                detectedVideoQualities = ["Source Quality", "1080p", "720p", "480p"];
-                selectedQuality = detectedVideoQualities.first;
-                isDetecting = false;
-              });
+          void detectFileType(String u) {
+            final lower = u.toLowerCase();
+            if (lower.contains(".zip") || lower.contains(".rar") || lower.contains(".7z")) {
+              setDialogState(() => downloadType = "zip");
+            } else if (lower.contains(".torrent") || lower.startsWith("magnet:")) {
+              setDialogState(() => downloadType = "torrent");
+            } else if (lower.contains(".mp3") || lower.contains(".wav") || lower.contains(".flac")) {
+              setDialogState(() => downloadType = "mp3");
             }
           }
 
@@ -439,7 +398,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   child: const Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 24),
                 ),
                 const SizedBox(width: 10),
-                const Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
+                const Text("Mehra Universal Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16.5, color: Colors.white)),
               ],
             ),
             content: SingleChildScrollView(
@@ -450,27 +409,21 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   TextField(
                     controller: urlController,
                     enabled: !isDownloading,
-                    onChanged: (val) {
-                      if (val.trim().length > 10) {
-                        detectSourceQuality(val.trim());
-                      }
-                    },
+                    onChanged: (val) => detectFileType(val.trim()),
                     decoration: InputDecoration(
-                      hintText: "Paste link (Instagram, Web, etc.)...",
-                      hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
+                      hintText: "Paste link (Video, MP3, ZIP, Torrent/File)...",
+                      hintStyle: const TextStyle(fontSize: 11.5, color: Colors.white38),
                       filled: true,
                       fillColor: Colors.black38,
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.search_rounded, color: Color(0xFF00E676), size: 20),
-                        onPressed: () => detectSourceQuality(urlController.text.trim()),
-                      ),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                     ),
                   ),
                   const SizedBox(height: 14),
-                  const Text("Format:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
+                  const Text("Format & Type:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
                     children: [
                       ChoiceChip(
                         label: const Text("MP4 Video"),
@@ -478,63 +431,65 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         selectedColor: const Color(0xFF00E676),
                         onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
                       ),
-                      const SizedBox(width: 8),
                       ChoiceChip(
                         label: const Text("MP3 Audio"),
                         selected: downloadType == "mp3",
                         selectedColor: const Color(0xFF00E676),
                         onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        downloadType == "mp4" ? "Available Stream Qualities:" : "Audio Mode (FX & Lofi):",
-                        style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
-                      ),
-                      if (isDetecting)
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00E676)),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: (downloadType == "mp4" ? detectedVideoQualities : detectedAudioQualities).map((q) {
-                      final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == q;
-                      return ChoiceChip(
-                        label: Text(
-                          q,
-                          style: TextStyle(
-                            color: isSel ? Colors.black : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11,
-                          ),
-                        ),
-                        selected: isSel,
+                      ChoiceChip(
+                        label: const Text("ZIP / Archive"),
+                        selected: downloadType == "zip",
                         selectedColor: const Color(0xFF00E676),
-                        backgroundColor: const Color(0xFF232432),
-                        onSelected: isDownloading || isDetecting
-                            ? null
-                            : (_) {
-                                setDialogState(() {
-                                  if (downloadType == "mp4") {
-                                    selectedQuality = q;
-                                  } else {
-                                    selectedAudioEffect = q;
-                                  }
-                                });
-                              },
-                      );
-                    }).toList(),
+                        onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "zip"),
+                      ),
+                      ChoiceChip(
+                        label: const Text("Torrent File"),
+                        selected: downloadType == "torrent",
+                        selectedColor: const Color(0xFF00E676),
+                        onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "torrent"),
+                      ),
+                    ],
                   ),
+                  if (downloadType == "mp4" || downloadType == "mp3") ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      downloadType == "mp4" ? "Resolution:" : "Audio FX Mode:",
+                      style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: (downloadType == "mp4" ? detectedVideoQualities : detectedAudioQualities).map((q) {
+                        final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == q;
+                        return ChoiceChip(
+                          label: Text(
+                            q,
+                            style: TextStyle(
+                              color: isSel ? Colors.black : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                          selected: isSel,
+                          selectedColor: const Color(0xFF00E676),
+                          backgroundColor: const Color(0xFF232432),
+                          onSelected: isDownloading
+                              ? null
+                              : (_) {
+                                  setDialogState(() {
+                                    if (downloadType == "mp4") {
+                                      selectedQuality = q;
+                                    } else {
+                                      selectedAudioEffect = q;
+                                    }
+                                  });
+                                },
+                        );
+                      }).toList(),
+                    ),
+                  ],
                   if (isDownloading) ...[
                     const SizedBox(height: 18),
                     Row(
@@ -554,7 +509,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: TweenAnimationBuilder<double>(
-                        duration: const Duration(milliseconds: 250),
+                        duration: const Duration(milliseconds: 200),
                         curve: Curves.easeInOut,
                         tween: Tween<double>(begin: 0, end: downloadProgress),
                         builder: (context, value, _) => LinearProgressIndicator(
@@ -580,7 +535,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   backgroundColor: const Color(0xFF00E676),
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                 ),
-                onPressed: isDownloading || isDetecting
+                onPressed: isDownloading
                     ? null
                     : () async {
                         final u = urlController.text.trim();
@@ -593,17 +548,22 @@ class _MainTabScreenState extends State<MainTabScreen> {
                           isDownloading = true;
                           downloadProgress = 0.01;
                           progressPercent = 1;
-                          progressSubtitle = "Connecting...";
+                          progressSubtitle = "Turbo connecting...";
                         });
 
                         try {
-                          final dir = await _getAppDir(downloadType == "mp4");
-                          final rawTag = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect)
-                              .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-                          final tempPath = "$dir/raw_download_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                          final finalPath = "$dir/Mehra_${rawTag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                          final tempFile = File(tempPath);
+                          final isVid = downloadType == "mp4";
+                          final dir = await _getAppDir(isVid);
+                          
+                          String ext = downloadType;
+                          if (downloadType == "torrent") ext = "torrent";
+                          if (downloadType == "zip") ext = "zip";
+                          
+                          final fileName = "Mehra_File_${DateTime.now().millisecondsSinceEpoch}.$ext";
+                          final finalPath = "$dir/$fileName";
+                          final tempFile = File("$dir/temp_${DateTime.now().millisecondsSinceEpoch}.$ext");
 
+                          // High throughput streaming connection
                           final request = http.Request('GET', Uri.parse(u))
                             ..headers.addAll({
                               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -633,7 +593,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                                   } else {
                                     downloadProgress = ((downloadProgress + 0.02).clamp(0.05, 0.95));
                                     progressPercent = (downloadProgress * 100).toInt();
-                                    progressSubtitle = "$mbDone MB downloaded";
+                                    progressSubtitle = "$mbDone MB Turbo Streaming";
                                   }
                                 });
                               },
@@ -641,12 +601,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
                                 await sink.close();
                                 client.close();
 
-                                // Audio FX Post-Processing with FFmpeg
+                                // Audio FX filter check
                                 if (downloadType == "mp3" && selectedAudioEffect != "Standard MP3") {
-                                  setDialogState(() {
-                                    progressSubtitle = "Rendering $selectedAudioEffect FX...";
-                                  });
-
+                                  setDialogState(() => progressSubtitle = "Rendering $selectedAudioEffect FX...");
                                   List<String> filterArgs = [];
                                   if (selectedAudioEffect == "8D Audio") {
                                     filterArgs = ['-af', 'apulsator=hz=0.125,aecho=0.8:0.88:40:0.4'];
@@ -677,9 +634,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
                                   progressPercent = 100;
                                   progressSubtitle = "Completed!";
                                 });
-                                await Future.delayed(const Duration(milliseconds: 350));
+                                await Future.delayed(const Duration(milliseconds: 300));
                                 Navigator.pop(ctx);
-                                _showMsg("Downloaded: ${File(finalPath).path.split(Platform.pathSeparator).last}");
+                                _showMsg("Saved successfully: $fileName");
                                 await _scanStorage();
                               },
                               onError: (err) async {
@@ -692,7 +649,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                             ).asFuture();
                           } else {
                             setDialogState(() => isDownloading = false);
-                            _showMsg("Server returned status ${response.statusCode}.");
+                            _showMsg("Server status: ${response.statusCode}");
                           }
                         } catch (e) {
                           setDialogState(() => isDownloading = false);
@@ -700,7 +657,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         }
                       },
                 child: Text(
-                  isDownloading ? "Downloading $progressPercent%..." : "Download Now",
+                  isDownloading ? "Downloading $progressPercent%..." : "Turbo Download",
                   style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1586,6 +1543,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
