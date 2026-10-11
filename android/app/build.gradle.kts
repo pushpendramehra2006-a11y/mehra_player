@@ -6,7 +6,7 @@
 
 android {
     namespace = "com.example.mehra_player"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -60,3 +60,4 @@ tasks.whenTaskAdded {
         enabled = false
     }
 }
+
