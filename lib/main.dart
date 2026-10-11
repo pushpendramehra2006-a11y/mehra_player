@@ -185,133 +185,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  void _showDownloaderDialog() {
-    final urlController = TextEditingController();
-    String downloadType = "mp4";
-    bool isDownloading = false;
-    double downloadProgress = 0.0;
-    int progressPercent = 0;
-    String progressSubtitle = "";
-
-    showDialog(
-      context: context,
-      barrierDismissible: !isDownloading,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: Row(
-            children: const [
-              Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 24),
-              SizedBox(width: 10),
-              Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: Colors.white)),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: urlController,
-                  enabled: !isDownloading,
-                  decoration: InputDecoration(
-                    hintText: "Paste video/audio link...",
-                    hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.black38,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text("MP4 Video"),
-                      selected: downloadType == "mp4",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text("MP3 Audio"),
-                      selected: downloadType == "mp3",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
-                    ),
-                  ],
-                ),
-                if (isDownloading) ...[
-                  const SizedBox(height: 18),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("$progressPercent%", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF00E676))),
-                      Text(progressSubtitle, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: downloadProgress > 0.0 ? downloadProgress : null,
-                      minHeight: 7,
-                      color: const Color(0xFF00E676),
-                      backgroundColor: Colors.white12,
-                    ),
-                  ),
-                ]
-              ],
-            ),
-          ),
-          actions: [
-            if (!isDownloading) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-              onPressed: isDownloading
-                  ? null
-                  : () async {
-                      final u = urlController.text.trim();
-                      if (u.isEmpty || !u.startsWith("http")) return;
-                      setDialogState(() {
-                        isDownloading = true;
-                        progressPercent = 1;
-                        progressSubtitle = "Connecting...";
-                      });
-                      try {
-                        final dir = await _getAppDir(downloadType == "mp4");
-                        final path = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                        final req = http.Request('GET', Uri.parse(u));
-                        final res = await req.send();
-                        final total = res.contentLength ?? 0;
-                        int got = 0;
-                        final sink = File(path).openWrite();
-                        await res.stream.listen((chunk) {
-                          sink.add(chunk);
-                          got += chunk.length;
-                          setDialogState(() {
-                            if (total > 0) {
-                              downloadProgress = (got / total).clamp(0.0, 1.0);
-                              progressPercent = (downloadProgress * 100).toInt();
-                              progressSubtitle = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB";
-                            }
-                          });
-                        }).asFuture();
-                        await sink.close();
-                        Navigator.pop(ctx);
-                        await _scanStorage();
-                      } catch (e) {
-                        setDialogState(() => isDownloading = false);
-                      }
-                    },
-              child: const Text("Download Now", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _launchPlayer(List<MediaFile> list, int index) {
     Navigator.push(
       context,
@@ -330,7 +203,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
         elevation: 0,
         title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white)),
         actions: [
-          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: _showDownloaderDialog),
           IconButton(
             icon: const Icon(Icons.folder_open_rounded, color: Colors.white70),
             onPressed: () async {
@@ -510,13 +382,18 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
 
   bool controlsVisible = true;
   bool isLocked = false;
-  bool isMuted = false;
-  double playbackSpeed = 1.0;
+  bool isLandscape = false;
 
-  // Real-time Pinch Zoom tracking
+  // Swipe Gestures: Brightness & Volume
+  double brightness = 0.5;
+  double volume = 1.0; // 0.0 to 1.0
+  bool showGestureIndicator = false;
+  String gestureType = ""; // "brightness" or "volume"
+  double gestureValue = 0.0; // 0 to 100
+
+  // Pinch Zoom tracking
   double currentZoomPercent = 100.0;
   bool showZoomToast = false;
-  BoxFit currentBoxFit = BoxFit.contain;
 
   @override
   void initState() {
@@ -526,7 +403,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 10));
     _transformController = TransformationController();
 
-    // Listen to two-finger pinch zoom changes
     _transformController.addListener(() {
       final scale = _transformController.value.getMaxScaleOnAxis();
       final pct = (scale * 100).roundToDouble();
@@ -553,11 +429,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     player.stream.playing.listen((p) {
       if (mounted) {
         setState(() => isPlaying = p);
-        if (p) {
-          _discAnimCtrl.repeat();
-        } else {
-          _discAnimCtrl.stop();
-        }
+        if (p) _discAnimCtrl.repeat(); else _discAnimCtrl.stop();
       }
     });
 
@@ -574,6 +446,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _discAnimCtrl.dispose();
     _transformController.dispose();
     player.dispose();
@@ -585,6 +463,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     setState(() => currentIndex = index);
     await player.open(Media(widget.playlist[index].file.path));
     await player.play();
+  }
+
+  void _toggleOrientation() {
+    setState(() {
+      isLandscape = !isLandscape;
+      if (isLandscape) {
+        SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+      } else {
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      }
+    });
   }
 
   String _formatDuration(Duration d) {
@@ -601,24 +490,14 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
         children: [
           AnimatedBuilder(
             animation: _discAnimCtrl,
-            builder: (context, child) {
-              return Transform.rotate(
-                angle: _discAnimCtrl.value * 2 * math.pi,
-                child: child,
-              );
-            },
+            builder: (context, child) => Transform.rotate(angle: _discAnimCtrl.value * 2 * math.pi, child: child),
             child: Container(
               width: 250,
               height: 250,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: const RadialGradient(
-                  colors: [Colors.black, Color(0xFF181A24), Colors.black],
-                  stops: [0.3, 0.7, 1.0],
-                ),
-                boxShadow: [
-                  BoxShadow(color: const Color(0xFF00E676).withOpacity(0.35), blurRadius: 45, spreadRadius: 5),
-                ],
+                gradient: const RadialGradient(colors: [Colors.black, Color(0xFF181A24), Colors.black], stops: [0.3, 0.7, 1.0]),
+                boxShadow: [BoxShadow(color: const Color(0xFF00E676).withOpacity(0.35), blurRadius: 45, spreadRadius: 5)],
               ),
               child: Center(
                 child: Container(
@@ -629,9 +508,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                     border: Border.all(color: const Color(0xFF00E676), width: 3),
                     gradient: const LinearGradient(colors: [Color(0xFF00E676), Colors.tealAccent]),
                   ),
-                  child: const Center(
-                    child: Icon(Icons.music_note_rounded, size: 48, color: Colors.black),
-                  ),
+                  child: const Center(child: Icon(Icons.music_note_rounded, size: 48, color: Colors.black)),
                 ),
               ),
             ),
@@ -639,13 +516,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
           const SizedBox(height: 38),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              item.title,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white),
-            ),
+            child: Text(item.title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
           ),
           const SizedBox(height: 6),
           Text(item.formattedSize, style: const TextStyle(color: Colors.white38, fontSize: 13)),
@@ -658,16 +529,45 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   Widget build(BuildContext context) {
     final currentItem = widget.playlist[currentIndex];
     final remainingDuration = duration - position;
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTap: () => setState(() => controlsVisible = !controlsVisible),
+        onTap: () {
+          if (!isLocked) setState(() => controlsVisible = !controlsVisible);
+        },
+        // Vertical swipe gesture handler
+        onVerticalDragUpdate: isLocked
+            ? null
+            : (details) {
+                final isLeftHalf = details.globalPosition.dx < (screenWidth / 2);
+                final delta = -details.primaryDelta! / 200.0; // swipe up is positive
+
+                setState(() {
+                  showGestureIndicator = true;
+                  if (isLeftHalf) {
+                    gestureType = "brightness";
+                    brightness = (brightness + delta).clamp(0.05, 1.0);
+                    gestureValue = (brightness * 100);
+                  } else {
+                    gestureType = "volume";
+                    volume = (volume + delta).clamp(0.0, 1.0);
+                    gestureValue = (volume * 100);
+                    player.setVolume(gestureValue);
+                  }
+                });
+              },
+        onVerticalDragEnd: (_) {
+          Future.delayed(const Duration(milliseconds: 900), () {
+            if (mounted) setState(() => showGestureIndicator = false);
+          });
+        },
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // Video or Audio Layer
             if (currentItem.isVideo)
-              // Multi-touch Pinch to Zoom in & out like PLAYit (100% to 300%)
               InteractiveViewer(
                 transformationController: _transformController,
                 minScale: 1.0,
@@ -680,11 +580,57 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                   });
                 },
                 child: SizedBox.expand(
-                  child: Video(controller: controller, controls: NoVideoControls, fit: currentBoxFit),
+                  child: Video(controller: controller, controls: NoVideoControls, fit: BoxFit.contain),
                 ),
               )
             else
               _buildAudioMusicPlayerView(currentItem),
+
+            // Brightness Dimmer Overlay
+            IgnorePointer(
+              child: Container(
+                color: Colors.black.withOpacity((1.0 - brightness) * 0.75),
+              ),
+            ),
+
+            // Gesture Volume / Brightness Indicator Pop-up
+            if (showGestureIndicator && !isLocked)
+              Center(
+                child: Container(
+                  width: 130,
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF00E676), width: 1.2),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        gestureType == "brightness" ? Icons.brightness_6_rounded : Icons.volume_up_rounded,
+                        color: const Color(0xFF00E676),
+                        size: 34,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        "${gestureValue.toInt()}%",
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: gestureValue / 100.0,
+                          minHeight: 5,
+                          color: const Color(0xFF00E676),
+                          backgroundColor: Colors.white24,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
             // Live Zoom percentage toast
             if (showZoomToast && currentItem.isVideo)
@@ -696,15 +642,40 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFF00E676), width: 1.5),
                   ),
-                  child: Text(
-                    "Zoom: ${currentZoomPercent.toInt()}%",
-                    style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 16),
+                  child: Text("Zoom: ${currentZoomPercent.toInt()}%", style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+
+            // Lock Button (Floating on Left)
+            if (controlsVisible || isLocked)
+              Positioned(
+                left: 16,
+                top: MediaQuery.of(context).size.height * 0.44,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      isLocked = !isLocked;
+                      if (!isLocked) controlsVisible = true;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.65),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: isLocked ? Colors.redAccent : const Color(0xFF00E676), width: 1.5),
+                    ),
+                    child: Icon(
+                      isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                      color: isLocked ? Colors.redAccent : const Color(0xFF00E676),
+                      size: 24,
+                    ),
                   ),
                 ),
               ),
 
             // Top Bar
-            if (controlsVisible)
+            if (controlsVisible && !isLocked)
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: Container(
@@ -721,41 +692,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                       Expanded(
                         child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
+                      // Rotate Button (Landscape / Portrait)
+                      IconButton(
+                        icon: Icon(isLandscape ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, color: const Color(0xFF00E676)),
+                        tooltip: 'Rotate Screen',
+                        onPressed: _toggleOrientation,
+                      ),
                     ],
-                  ),
-                ),
-              ),
-
-            // Double tap to reset zoom button (Right side)
-            if (controlsVisible && !isLocked && currentItem.isVideo)
-              Positioned(
-                right: 14,
-                top: MediaQuery.of(context).size.height * 0.44,
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _transformController.value = Matrix4.identity();
-                      currentZoomPercent = 100.0;
-                      currentBoxFit = currentBoxFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
-                    });
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF00E676).withOpacity(0.6)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.zoom_out_map_rounded, color: Color(0xFF00E676), size: 20),
-                        const SizedBox(height: 3),
-                        Text(
-                          "${currentZoomPercent.toInt()}%",
-                          style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.white),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ),
@@ -814,9 +757,14 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                               if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
                             },
                           ),
+                          // Rotate Shortcut Button
                           IconButton(
-                            icon: const Icon(Icons.fit_screen_rounded, color: Color(0xFF00E676), size: 26),
-                            tooltip: 'Reset Zoom & Fit',
+                            icon: const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E676), size: 24),
+                            onPressed: _toggleOrientation,
+                          ),
+                          // Reset Zoom to Normal
+                          IconButton(
+                            icon: const Icon(Icons.fit_screen_rounded, color: Colors.white70, size: 24),
                             onPressed: () {
                               setState(() {
                                 _transformController.value = Matrix4.identity();
