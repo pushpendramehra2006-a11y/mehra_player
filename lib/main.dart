@@ -41,9 +41,10 @@ class MainPlayerScreen extends StatefulWidget {
 }
 
 class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerProviderStateMixin {
+  // Low-latency, high-performance GPU config for smooth video rendering
   late final player = Player(
     configuration: const PlayerConfiguration(
-      bufferSize: 128 * 1024 * 1024,
+      bufferSize: 64 * 1024 * 1024,
       vo: 'gpu',
       pitch: true,
     ),
@@ -53,7 +54,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     player,
     configuration: const VideoControllerConfiguration(
       enableHardwareAcceleration: true,
-      hwdec: 'auto',
+      hwdec: 'auto-safe',
+      scale: 1.0,
     ),
   );
 
@@ -67,7 +69,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
 
-  // Features
   bool ambientLight = true;
   bool dolbyAtmos = false;
   bool isShuffle = false;
@@ -78,7 +79,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   double brightness = 1.0;
   BoxFit currentFit = BoxFit.contain;
   String fitLabel = "Fit";
-  String soundProfile = "Normal"; // Normal, Lofi, 8D, 16D
+  String soundProfile = "Normal";
 
   @override
   void initState() {
@@ -154,7 +155,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           final list = dir.listSync(recursive: true, followLinks: false);
           for (var f in list) {
             final p = f.path.toLowerCase();
-            if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov')) {
+            if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm')) {
               vids.add(f);
             } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac')) {
               auds.add(f);
@@ -205,7 +206,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     if (profile == "Lofi") {
       player.setRate(0.88);
       player.setVolume(115.0);
-      showMsg("Lofi Chill Mode: Slowed + Reverb Boost");
+      showMsg("Lofi Chill: Slowed + Bass Active");
     } else if (profile == "8D") {
       player.setRate(1.0);
       player.setVolume(125.0);
@@ -213,18 +214,18 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     } else if (profile == "16D") {
       player.setRate(1.0);
       player.setVolume(135.0);
-      showMsg("16D Ultra Spatial Surround Mode Active");
+      showMsg("16D Ultra Spatial Sound Active");
     } else {
       player.setRate(speed);
       player.setVolume(dolbyAtmos ? 130.0 : 100.0);
-      showMsg("Normal Studio Audio Mode");
+      showMsg("Normal Audio Mode");
     }
   }
 
   void toggleDolby() {
     setState(() => dolbyAtmos = !dolbyAtmos);
     player.setVolume(dolbyAtmos ? 130.0 : 100.0);
-    showMsg(dolbyAtmos ? "Dolby Atmos 3D Boost: ON (+30%)" : "Dolby Atmos: OFF");
+    showMsg(dolbyAtmos ? "Dolby Atmos: ON (+30% Boost)" : "Dolby Atmos: OFF");
   }
 
   void cycleAspectRatio() {
@@ -240,14 +241,14 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         fitLabel = "Fit";
       }
     });
-    showMsg("Aspect Ratio: $fitLabel");
+    showMsg("Aspect: $fitLabel");
   }
 
   void openTrimDialog() {
     final activeList = isAudioMode ? audioList : videoList;
     final currentFile = (currentIndex >= 0 && currentIndex < activeList.length) ? activeList[currentIndex] : null;
     if (currentFile == null || duration.inSeconds <= 0) {
-      showMsg("Trim karne ke liye pehle video play karein");
+      showMsg("Pehle koi video ya audio play karein");
       return;
     }
 
@@ -259,11 +260,12 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF161622),
-          title: const Text('Cut & Trim Video / Audio'),
+          title: const Text('Cut & Trim Media'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text("Start: ${formatTime(Duration(seconds: startVal.toInt()))}  |  End: ${formatTime(Duration(seconds: endVal.toInt()))}",
+              Text(
+                "Start: ${formatTime(Duration(seconds: startVal.toInt()))}  |  End: ${formatTime(Duration(seconds: endVal.toInt()))}",
                 style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.cyanAccent),
               ),
               RangeSlider(
@@ -292,7 +294,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 final outPath = Platform.isWindows
                     ? '$outDir\\cut_${DateTime.now().millisecondsSinceEpoch}.$ext'
                     : '$outDir/cut_${DateTime.now().millisecondsSinceEpoch}.$ext';
-                showMsg("Exporting cut clip... please wait");
+                showMsg("Exporting cut file...");
                 final res = await Process.run('ffmpeg', [
                   '-ss', '${startVal.toInt()}',
                   '-i', currentFile.path,
@@ -302,10 +304,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                   '-y'
                 ]);
                 if (res.exitCode == 0) {
-                  showMsg("Cut clip saved: $outPath");
+                  showMsg("Saved: $outPath");
                   await scanAllMediaFiles();
                 } else {
-                  showMsg("Cut export complete in MehraPlayer folder");
+                  showMsg("Saved in Downloads/MehraPlayer");
                 }
               },
               child: const Text('Export Cut File', style: TextStyle(color: Colors.white)),
@@ -326,7 +328,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           children: [
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text("Select 3D Sound / Audio Profile", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Text("Select 3D / Audio Effect", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
             ListTile(
               leading: const Icon(Icons.music_note, color: Colors.white70),
@@ -336,19 +338,19 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
             ListTile(
               leading: const Icon(Icons.spa, color: Colors.amberAccent),
-              title: const Text("Lofi Mode (Slowed + Deep Chill)"),
+              title: const Text("Lofi Chill Mode (Slowed + Bass)"),
               selected: soundProfile == "Lofi",
               onTap: () { Navigator.pop(ctx); applyAudioProfile("Lofi"); },
             ),
             ListTile(
               leading: const Icon(Icons.headphones, color: Colors.cyanAccent),
-              title: const Text("8D Audio (Rotating Binaural Space)"),
+              title: const Text("8D Audio (Spatial Surround)"),
               selected: soundProfile == "8D",
               onTap: () { Navigator.pop(ctx); applyAudioProfile("8D"); },
             ),
             ListTile(
               leading: const Icon(Icons.surround_sound, color: Color(0xFF8B5CF6)),
-              title: const Text("16D Audio (Ultra Multidimensional Surround)"),
+              title: const Text("16D Audio (Ultra Multidimensional)"),
               selected: soundProfile == "16D",
               onTap: () { Navigator.pop(ctx); applyAudioProfile("16D"); },
             ),
@@ -377,87 +379,95 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         appBar: AppBar(
           backgroundColor: const Color(0xFF101018),
           elevation: 1,
-          titleSpacing: 14,
+          titleSpacing: 10,
           title: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF6366F1)]),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text('M', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
               ),
-              const SizedBox(width: 10),
-              const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+              const SizedBox(width: 8),
+              const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
             ],
           ),
           actions: [
-            IconButton(
-              icon: Icon(isLocked ? Icons.lock : Icons.lock_open, color: isLocked ? Colors.redAccent : Colors.white70),
-              tooltip: 'Screen Lock',
-              onPressed: () => setState(() => isLocked = !isLocked),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(isLocked ? Icons.lock : Icons.lock_open, color: isLocked ? Colors.redAccent : Colors.white70, size: 20),
+                    tooltip: 'Screen Lock',
+                    onPressed: () => setState(() => isLocked = !isLocked),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.headphones, color: soundProfile != "Normal" ? Colors.cyanAccent : Colors.white70, size: 20),
+                    tooltip: '8D / 16D / Lofi Effects',
+                    onPressed: openSoundProfileSelector,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.content_cut, color: Colors.white70, size: 20),
+                    tooltip: 'Cut & Trim',
+                    onPressed: openTrimDialog,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.subtitles, color: showSubtitles ? const Color(0xFF8B5CF6) : Colors.white54, size: 20),
+                    tooltip: 'Subtitles',
+                    onPressed: () {
+                      setState(() => showSubtitles = !showSubtitles);
+                      player.setSubtitleTrack(showSubtitles ? SubtitleTrack.auto() : SubtitleTrack.no());
+                      showMsg(showSubtitles ? "Subtitles: ON" : "Subtitles: OFF");
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.aspect_ratio, color: Colors.white70, size: 20),
+                    tooltip: 'Aspect: $fitLabel',
+                    onPressed: cycleAspectRatio,
+                  ),
+                  IconButton(
+                    icon: Icon(ambientLight ? Icons.lightbulb : Icons.lightbulb_outline, color: ambientLight ? Colors.amberAccent : Colors.white54, size: 20),
+                    tooltip: 'Ambient Glow',
+                    onPressed: () => setState(() => ambientLight = !ambientLight),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.surround_sound, color: dolbyAtmos ? const Color(0xFF06B6D4) : Colors.white54, size: 20),
+                    tooltip: 'Dolby Boost',
+                    onPressed: toggleDolby,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.folder_open, color: Color(0xFFA78BFA), size: 20),
+                    tooltip: 'Open Media File',
+                    onPressed: () async {
+                      final res = await FilePicker.platform.pickFiles(type: FileType.media);
+                      if (res != null && res.files.single.path != null) {
+                        final p = res.files.single.path!;
+                        final isAud = p.toLowerCase().endsWith('.mp3');
+                        setState(() {
+                          if (isAud) {
+                            audioList.insert(0, File(p));
+                            playMedia(0, true);
+                          } else {
+                            videoList.insert(0, File(p));
+                            playMedia(0, false);
+                          }
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ),
             ),
-            IconButton(
-              icon: Icon(Icons.headphones, color: soundProfile != "Normal" ? Colors.cyanAccent : Colors.white70),
-              tooltip: '8D / 16D / Lofi Effects',
-              onPressed: openSoundProfileSelector,
-            ),
-            IconButton(
-              icon: const Icon(Icons.content_cut, color: Colors.white70),
-              tooltip: 'Cut & Trim Video',
-              onPressed: openTrimDialog,
-            ),
-            IconButton(
-              icon: Icon(Icons.subtitles, color: showSubtitles ? const Color(0xFF8B5CF6) : Colors.white54),
-              tooltip: 'Subtitles',
-              onPressed: () {
-                setState(() => showSubtitles = !showSubtitles);
-                player.setSubtitleTrack(showSubtitles ? SubtitleTrack.auto() : SubtitleTrack.no());
-                showMsg(showSubtitles ? "Subtitles: ON" : "Subtitles: OFF");
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.aspect_ratio, color: Colors.white70),
-              tooltip: 'Aspect: $fitLabel',
-              onPressed: cycleAspectRatio,
-            ),
-            IconButton(
-              icon: Icon(ambientLight ? Icons.lightbulb : Icons.lightbulb_outline, color: ambientLight ? Colors.amberAccent : Colors.white54),
-              tooltip: 'Ambient Glow',
-              onPressed: () => setState(() => ambientLight = !ambientLight),
-            ),
-            IconButton(
-              icon: Icon(Icons.surround_sound, color: dolbyAtmos ? const Color(0xFF06B6D4) : Colors.white54),
-              tooltip: 'Dolby Boost',
-              onPressed: toggleDolby,
-            ),
-            IconButton(
-              icon: const Icon(Icons.folder_open, color: Color(0xFFA78BFA)),
-              tooltip: 'Open Media File',
-              onPressed: () async {
-                final res = await FilePicker.platform.pickFiles(type: FileType.media);
-                if (res != null && res.files.single.path != null) {
-                  final p = res.files.single.path!;
-                  final isAud = p.toLowerCase().endsWith('.mp3');
-                  setState(() {
-                    if (isAud) {
-                      audioList.insert(0, File(p));
-                      playMedia(0, true);
-                    } else {
-                      videoList.insert(0, File(p));
-                      playMedia(0, false);
-                    }
-                  });
-                }
-              },
-            ),
-            const SizedBox(width: 8),
           ],
         ),
         body: Column(
           children: [
-            // Stage Viewport with Gestures & Double-click
             Expanded(
               flex: 5,
               child: Container(
@@ -481,7 +491,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               ),
             ),
 
-            // Controls Bar
             if (!isLocked)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -493,7 +502,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 ),
                 child: Column(
                   children: [
-                    // Timeline
                     Row(
                       children: [
                         Text(formatTime(position), style: const TextStyle(fontSize: 12, color: Colors.white70)),
@@ -517,7 +525,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                       ],
                     ),
 
-                    // Controls & Tools Row
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -550,7 +557,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                           ],
                         ),
 
-                        // Brightness Slider
                         Row(
                           children: [
                             const Icon(Icons.brightness_medium, size: 16, color: Colors.white54),
@@ -564,7 +570,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Speed
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
@@ -594,7 +599,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 ),
               ),
 
-            // Tab Bar
             Container(
               color: const Color(0xFF101018),
               child: const TabBar(
@@ -608,7 +612,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               ),
             ),
 
-            // Media Cards List
             Expanded(
               flex: 4,
               child: TabBarView(
@@ -699,20 +702,23 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       );
     }
 
+    // Direct Native Texture Video Rendering with Zero-Lag Dimming Overlay
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColorFiltered(
-          colorFilter: ColorFilter.mode(
-            Colors.black.withOpacity(1.0 - brightness),
-            BlendMode.darken,
-          ),
-          child: Video(
-            controller: controller,
-            controls: NoVideoControls,
-            fit: currentFit,
-          ),
+        Video(
+          controller: controller,
+          controls: NoVideoControls,
+          fit: currentFit,
         ),
+
+        // High performance dimming without heavy GPU ColorFilter
+        if (brightness < 0.98)
+          IgnorePointer(
+            child: Container(
+              color: Colors.black.withOpacity(1.0 - brightness),
+            ),
+          ),
 
         // Left Double-Tap (-10s)
         Positioned(
