@@ -355,13 +355,13 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-          void _showDownloaderDialog() {
+            void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
     List<String> detectedVideoQualities = ["Detecting..."];
-    List<String> detectedAudioQualities = ["Best (Original)", "192 kbps", "128 kbps"];
+    List<String> detectedAudioQualities = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
     String selectedQuality = "Best Available";
-    String selectedAudioQuality = "Best (Original)";
+    String selectedAudioEffect = "Standard MP3";
     bool isDetecting = false;
     bool isDownloading = false;
     double downloadProgress = 0.0;
@@ -381,7 +381,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
             });
 
             try {
-              // Lightweight stream inspection
               final uri = Uri.parse(u);
               final req = http.Request('HEAD', uri)
                 ..headers.addAll({
@@ -393,7 +392,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
               List<String> dynamicList = [];
               final host = uri.host.toLowerCase();
 
-              // Platform-aware realistic resolution boundaries
               if (host.contains("instagram.com") || host.contains("cdninstagram")) {
                 dynamicList = ["1080p (Max)", "720p", "480p"];
               } else if (host.contains("facebook.com") || host.contains("fbcdn")) {
@@ -403,10 +401,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
               } else if (host.contains("youtube") || host.contains("youtu.be")) {
                 dynamicList = ["Auto Best", "1080p", "720p", "480p", "360p"];
               } else {
-                // Direct web files / general streams
                 final cLength = streamedResponse.contentLength ?? 0;
                 if (cLength > 200 * 1024 * 1024) {
-                  // > 200MB usually allows 4K/1080p
                   dynamicList = ["4K UHD", "1080p HD", "720p"];
                 } else if (cLength > 40 * 1024 * 1024) {
                   dynamicList = ["1080p HD", "720p", "480p"];
@@ -496,7 +492,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        downloadType == "mp4" ? "Available Stream Qualities:" : "Audio Bitrate:",
+                        downloadType == "mp4" ? "Available Stream Qualities:" : "Audio Mode (FX & Lofi):",
                         style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
                       ),
                       if (isDetecting)
@@ -512,7 +508,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     spacing: 6,
                     runSpacing: 6,
                     children: (downloadType == "mp4" ? detectedVideoQualities : detectedAudioQualities).map((q) {
-                      final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality) == q;
+                      final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == q;
                       return ChoiceChip(
                         label: Text(
                           q,
@@ -532,7 +528,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                                   if (downloadType == "mp4") {
                                     selectedQuality = q;
                                   } else {
-                                    selectedAudioQuality = q;
+                                    selectedAudioEffect = q;
                                   }
                                 });
                               },
@@ -602,10 +598,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
                         try {
                           final dir = await _getAppDir(downloadType == "mp4");
-                          final cleanTag = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality)
+                          final rawTag = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect)
                               .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-                          final filePath = "$dir/Mehra_${cleanTag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                          final file = File(filePath);
+                          final tempPath = "$dir/raw_download_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                          final finalPath = "$dir/Mehra_${rawTag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                          final tempFile = File(tempPath);
 
                           final request = http.Request('GET', Uri.parse(u))
                             ..headers.addAll({
@@ -620,7 +617,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                           if (response.statusCode >= 200 && response.statusCode < 300) {
                             final totalBytes = response.contentLength ?? 0;
                             int receivedBytes = 0;
-                            final sink = file.openWrite();
+                            final sink = tempFile.openWrite();
 
                             await response.stream.listen(
                               (chunk) {
@@ -643,14 +640,46 @@ class _MainTabScreenState extends State<MainTabScreen> {
                               onDone: () async {
                                 await sink.close();
                                 client.close();
+
+                                // Audio FX Post-Processing with FFmpeg
+                                if (downloadType == "mp3" && selectedAudioEffect != "Standard MP3") {
+                                  setDialogState(() {
+                                    progressSubtitle = "Rendering $selectedAudioEffect FX...";
+                                  });
+
+                                  List<String> filterArgs = [];
+                                  if (selectedAudioEffect == "8D Audio") {
+                                    filterArgs = ['-af', 'apulsator=hz=0.125,aecho=0.8:0.88:40:0.4'];
+                                  } else if (selectedAudioEffect == "16D Audio") {
+                                    filterArgs = ['-af', 'apulsator=hz=0.25,aecho=0.8:0.9:30:0.5'];
+                                  } else if (selectedAudioEffect == "Lofi Chill") {
+                                    filterArgs = ['-af', 'atempo=0.88,lowpass=f=3200,volume=1.2'];
+                                  }
+
+                                  final proc = await Process.run('ffmpeg', [
+                                    '-i', tempFile.path,
+                                    ...filterArgs,
+                                    finalPath,
+                                    '-y'
+                                  ]);
+
+                                  if (proc.exitCode == 0) {
+                                    try { tempFile.deleteSync(); } catch (_) {}
+                                  } else {
+                                    try { tempFile.renameSync(finalPath); } catch (_) {}
+                                  }
+                                } else {
+                                  try { tempFile.renameSync(finalPath); } catch (_) {}
+                                }
+
                                 setDialogState(() {
                                   downloadProgress = 1.0;
                                   progressPercent = 100;
                                   progressSubtitle = "Completed!";
                                 });
-                                await Future.delayed(const Duration(milliseconds: 400));
+                                await Future.delayed(const Duration(milliseconds: 350));
                                 Navigator.pop(ctx);
-                                _showMsg("Downloaded successfully: ${file.path.split(Platform.pathSeparator).last}");
+                                _showMsg("Downloaded: ${File(finalPath).path.split(Platform.pathSeparator).last}");
                                 await _scanStorage();
                               },
                               onError: (err) async {
@@ -1557,6 +1586,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
