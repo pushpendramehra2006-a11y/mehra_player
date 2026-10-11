@@ -900,6 +900,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
       bufferSize: 128 * 1024 * 1024,
       vo: 'gpu-next',
       pitch: true,
+      ready: () async {
+        // Auto-scale 8K/4K down to device capabilities & prevent frame lag
+        await player.platform?.setProperty('framedrop', 'vo');
+        await player.platform?.setProperty('video-sync', 'audio');
+        await player.platform?.setProperty('vd-lavc-fast', 'yes');
+        await player.platform?.setProperty('vd-lavc-skiploopfilter', 'nonkey');
+      },
     ),
   );
 
@@ -907,7 +914,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     player,
     configuration: const VideoControllerConfiguration(
       enableHardwareAcceleration: true,
-      hwdec: 'd3d11va',
+      hwdec: 'auto-safe', // Auto-adapts to Direct3D11 on Windows and MediaCodec on Android
     ),
   );
 
@@ -1543,6 +1550,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
