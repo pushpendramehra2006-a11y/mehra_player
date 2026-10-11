@@ -1,6 +1,7 @@
 ﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -9,6 +10,13 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  // Allow all orientations on mobile
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
   runApp(const MehraApp());
 }
 
@@ -59,6 +67,7 @@ class MediaItem {
   }
 }
 
+// ---------------- HOME SCREEN ----------------
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -157,7 +166,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
     }
 
-    // Background thumbnail loading
     for (var item in vList) {
       try {
         final thumb = await VideoThumbnail.thumbnailData(
@@ -200,10 +208,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       ]);
 
       if (res.exitCode == 0) {
-        // Rescan storage to pick up new audio immediately
         await _scanStorage();
         if (mounted) {
-          _tabController.animateTo(1); // Switch to Audio tab automatically
+          _tabController.animateTo(1);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Audio extract complete! Switched to Audio tab."),
@@ -217,9 +224,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => isConverting = false);
     }
@@ -398,7 +403,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
                 ),
-                // Video to Audio Quick Convert Button
                 IconButton(
                   icon: const Icon(Icons.music_note_rounded, color: Color(0xFF00E676)),
                   tooltip: 'Convert to Audio (MP3)',
@@ -448,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 }
 
-// ---------------- PLAYER SCREEN ----------------
+// ---------------- RESPONSIVE PLAYER SCREEN (Auto Landscape / Portrait) ----------------
 class PlayerScreen extends StatefulWidget {
   final List<MediaItem> playlist;
   final int initialIndex;
@@ -486,6 +490,7 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
   bool isMuted = false;
   bool mirrorMode = false;
   bool nightMode = false;
+  bool isLandscape = false;
   double brightness = 1.0;
   double speed = 1.0;
   BoxFit currentFit = BoxFit.contain;
@@ -518,6 +523,13 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
   void dispose() {
     pulseController.dispose();
     player.dispose();
+    // Reset orientation on exiting player
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     super.dispose();
   }
 
@@ -526,6 +538,15 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
     setState(() => currentIndex = index);
     await player.open(Media(widget.playlist[index].file.path));
     await player.play();
+  }
+
+  void _toggleManualOrientation() {
+    if (isLandscape) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    } else {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+    }
+    setState(() => isLandscape = !isLandscape);
   }
 
   String formatTime(Duration d) {
@@ -705,264 +726,281 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
     final currentItem = widget.playlist[currentIndex];
     final isAudio = !currentItem.isVideo;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: () => setState(() => isControlsVisible = !isControlsVisible),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Stage: Audio Visualizer or Video Viewport
-            if (isAudio)
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: RadialGradient(
-                    colors: [Color(0xFF2E1065), Color(0xFF08080C)],
-                    radius: 0.9,
-                  ),
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedBuilder(
-                        animation: pulseController,
-                        builder: (context, child) {
-                          final scale = isPlaying ? 1.0 + (pulseController.value * 0.08) : 1.0;
-                          return Transform.scale(
-                            scale: scale,
-                            child: Container(
-                              width: 140,
-                              height: 140,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: const LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF00E676)]),
-                                boxShadow: [
-                                  BoxShadow(color: const Color(0xFF8B5CF6).withOpacity(0.4), blurRadius: 30),
-                                ],
-                              ),
-                              child: const Icon(Icons.audiotrack_rounded, size: 70, color: Colors.white),
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 24),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Text(
-                          currentItem.name,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        soundProfile != "Normal" ? "$soundProfile Active" : "Hi-Res Audio Playback",
-                        style: const TextStyle(color: Color(0xFF00E676), fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()..setEntry(0, 0, mirrorMode ? -1 : 1),
-                child: Video(
-                  controller: controller,
-                  controls: NoVideoControls,
-                  fit: currentFit,
-                ),
-              ),
+    return OrientationBuilder(
+      builder: (context, orientation) {
+        final inLandscape = orientation == Orientation.landscape;
 
-            // Dim / Night filters
-            if (nightMode)
-              IgnorePointer(child: Container(color: Colors.amber.withOpacity(0.18))),
-            if (brightness < 0.98)
-              IgnorePointer(child: Container(color: Colors.black.withOpacity(1.0 - brightness))),
-
-            // Double Tap Seeking zones
-            Positioned(
-              left: 0,
-              top: 80,
-              bottom: 80,
-              width: MediaQuery.of(context).size.width * 0.35,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onDoubleTap: () {
-                  player.seek(position - const Duration(seconds: 10));
-                  showMsg("-10s ⏪");
-                },
-              ),
-            ),
-            Positioned(
-              right: 0,
-              top: 80,
-              bottom: 80,
-              width: MediaQuery.of(context).size.width * 0.35,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onDoubleTap: () {
-                  player.seek(position + const Duration(seconds: 10));
-                  showMsg("+10s ⏩");
-                },
-              ),
-            ),
-
-            // Left Side Quick Buttons
-            if (isControlsVisible)
-              Positioned(
-                left: 14,
-                top: MediaQuery.of(context).size.height * 0.42,
-                child: Column(
-                  children: [
-                    _sideCircleBtn(
-                      icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                      onTap: () {
-                        setState(() => isMuted = !isMuted);
-                        player.setVolume(isMuted ? 0 : 100);
-                      },
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: GestureDetector(
+            onTap: () => setState(() => isControlsVisible = !isControlsVisible),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Video or Audio Stage
+                if (isAudio)
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: RadialGradient(
+                        colors: [Color(0xFF2E1065), Color(0xFF08080C)],
+                        radius: 0.9,
+                      ),
                     ),
-                    const SizedBox(height: 14),
-                    _sideCircleBtn(
-                      icon: isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                      color: isLocked ? Colors.redAccent : Colors.white,
-                      onTap: () => setState(() => isLocked = !isLocked),
-                    ),
-                  ],
-                ),
-              ),
-
-            // Top Header Bar
-            if (isControlsVisible && !isLocked)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.only(top: 36, left: 10, right: 10, bottom: 10),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.black87, Colors.transparent],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      Expanded(
-                        child: Text(
-                          currentItem.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white38),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(isAudio ? "MP3" : "HDR", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                        onPressed: _openPlayitSettingsSheet,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-            // Bottom Controller Bar
-            if (isControlsVisible && !isLocked)
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Colors.transparent, Colors.black87],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(formatTime(position), style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
-                          Expanded(
-                            child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                activeTrackColor: const Color(0xFF00E676),
-                                inactiveTrackColor: Colors.white24,
-                                thumbColor: Colors.white,
-                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                                trackHeight: 2.5,
-                              ),
-                              child: Slider(
-                                value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
-                                max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
-                                onChanged: (val) => player.seek(Duration(milliseconds: val.toInt())),
-                              ),
+                          AnimatedBuilder(
+                            animation: pulseController,
+                            builder: (context, child) {
+                              final scale = isPlaying ? 1.0 + (pulseController.value * 0.08) : 1.0;
+                              return Transform.scale(
+                                scale: scale,
+                                child: Container(
+                                  width: inLandscape ? 100 : 140,
+                                  height: inLandscape ? 100 : 140,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: const LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF00E676)]),
+                                    boxShadow: [
+                                      BoxShadow(color: const Color(0xFF8B5CF6).withOpacity(0.4), blurRadius: 30),
+                                    ],
+                                  ),
+                                  child: Icon(Icons.audiotrack_rounded, size: inLandscape ? 50 : 70, color: Colors.white),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              currentItem.name,
+                              style: TextStyle(fontSize: inLandscape ? 14 : 16, fontWeight: FontWeight.bold, color: Colors.white),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
                             ),
                           ),
-                          Text(formatTime(duration), style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
+                          const SizedBox(height: 6),
+                          Text(
+                            soundProfile != "Normal" ? "$soundProfile Active" : "Hi-Res Audio Playback",
+                            style: const TextStyle(color: Color(0xFF00E676), fontSize: 12),
+                          ),
                         ],
                       ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    ),
+                  )
+                else
+                  Center(
+                    child: Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()..setEntry(0, 0, mirrorMode ? -1 : 1),
+                      child: Video(
+                        controller: controller,
+                        controls: NoVideoControls,
+                        fit: currentFit,
+                      ),
+                    ),
+                  ),
+
+                if (nightMode)
+                  IgnorePointer(child: Container(color: Colors.amber.withOpacity(0.18))),
+                if (brightness < 0.98)
+                  IgnorePointer(child: Container(color: Colors.black.withOpacity(1.0 - brightness))),
+
+                // Seeking Zones
+                Positioned(
+                  left: 0,
+                  top: 70,
+                  bottom: 70,
+                  width: MediaQuery.of(context).size.width * 0.35,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onDoubleTap: () {
+                      player.seek(position - const Duration(seconds: 10));
+                      showMsg("-10s ⏪");
+                    },
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 70,
+                  bottom: 70,
+                  width: MediaQuery.of(context).size.width * 0.35,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onDoubleTap: () {
+                      player.seek(position + const Duration(seconds: 10));
+                      showMsg("+10s ⏩");
+                    },
+                  ),
+                ),
+
+                // Side Quick Actions
+                if (isControlsVisible)
+                  Positioned(
+                    left: 14,
+                    top: MediaQuery.of(context).size.height * 0.40,
+                    child: Column(
+                      children: [
+                        _sideCircleBtn(
+                          icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                          onTap: () {
+                            setState(() => isMuted = !isMuted);
+                            player.setVolume(isMuted ? 0 : 100);
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        _sideCircleBtn(
+                          icon: isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                          color: isLocked ? Colors.redAccent : Colors.white,
+                          onTap: () => setState(() => isLocked = !isLocked),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Top Bar
+                if (isControlsVisible && !isLocked)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: EdgeInsets.only(
+                        top: inLandscape ? 12 : 36,
+                        left: 12,
+                        right: 12,
+                        bottom: 8,
+                      ),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.black87, Colors.transparent],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                      child: Row(
                         children: [
                           IconButton(
-                            iconSize: 34,
-                            icon: Icon(isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: Colors.white),
-                            onPressed: () => player.playOrPause(),
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                          Expanded(
+                            child: Text(
+                              currentItem.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                            ),
+                          ),
+                          // Rotate Toggle Button
+                          IconButton(
+                            icon: Icon(inLandscape ? Icons.screen_lock_portrait_rounded : Icons.screen_lock_landscape_rounded, color: Colors.white70, size: 20),
+                            tooltip: 'Rotate Screen',
+                            onPressed: _toggleManualOrientation,
                           ),
                           IconButton(
-                            icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
-                            onPressed: () {
-                              if (currentIndex > 0) _playIndex(currentIndex - 1);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
-                            onPressed: () {
-                              if (currentIndex + 1 < widget.playlist.length) _playIndex(currentIndex + 1);
-                            },
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                speed = speed == 1.0 ? 1.5 : (speed == 1.5 ? 2.0 : 1.0);
-                                player.setRate(speed);
-                              });
-                            },
-                            child: Text("${speed}x", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.tune_rounded, color: Colors.white70),
+                            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
                             onPressed: _openPlayitSettingsSheet,
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-          ],
-        ),
-      ),
+
+                // Bottom Bar
+                if (isControlsVisible && !isLocked)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: inLandscape ? 8 : 14,
+                      ),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.transparent, Colors.black87],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Text(formatTime(position), style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                              Expanded(
+                                child: SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    activeTrackColor: const Color(0xFF00E676),
+                                    inactiveTrackColor: Colors.white24,
+                                    thumbColor: Colors.white,
+                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                                    trackHeight: 2.5,
+                                  ),
+                                  child: Slider(
+                                    value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
+                                    max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
+                                    onChanged: (val) => player.seek(Duration(milliseconds: val.toInt())),
+                                  ),
+                                ),
+                              ),
+                              Text(formatTime(duration), style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                            ],
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              IconButton(
+                                iconSize: 32,
+                                icon: Icon(isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: Colors.white),
+                                onPressed: () => player.playOrPause(),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
+                                onPressed: () {
+                                  if (currentIndex > 0) _playIndex(currentIndex - 1);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
+                                onPressed: () {
+                                  if (currentIndex + 1 < widget.playlist.length) _playIndex(currentIndex + 1);
+                                },
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  setState(() {
+                                    speed = speed == 1.0 ? 1.5 : (speed == 1.5 ? 2.0 : 1.0);
+                                    player.setRate(speed);
+                                  });
+                                },
+                                child: Text("${speed}x", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                              IconButton(
+                                icon: Icon(currentFit == BoxFit.contain ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded, color: Colors.white70),
+                                tooltip: 'Fit / Fill',
+                                onPressed: () {
+                                  setState(() {
+                                    currentFit = currentFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -970,13 +1008,13 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(9),
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.black.withOpacity(0.55),
           border: Border.all(color: Colors.white24),
         ),
-        child: Icon(icon, color: color, size: 20),
+        child: Icon(icon, color: color, size: 18),
       ),
     );
   }

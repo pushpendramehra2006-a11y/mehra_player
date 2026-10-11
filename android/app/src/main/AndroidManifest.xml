@@ -9,7 +9,7 @@
         android:label="Mehra Player"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
-        <activity
+        <activity android:screenOrientation="fullUser" android:configChanges="orientation|screenSize|smallestScreenSize"
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
@@ -30,3 +30,4 @@
             android:value="2" />
     </application>
 </manifest>
+
