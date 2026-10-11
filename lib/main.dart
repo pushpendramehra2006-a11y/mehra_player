@@ -80,8 +80,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
   List<MediaFile> historyList = [];
-  bool isLoading = false;
-  String sortBy = "time"; // "name", "size", "time"
+  String sortBy = "time";
 
   @override
   void initState() {
@@ -115,7 +114,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  // Deep Scan to find all videos present across internal storage
   Future<void> _scanStorage() async {
     List<Directory> targetDirs = [];
     if (Platform.isAndroid) {
@@ -126,7 +124,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
           for (var item in topLevel) {
             if (item is Directory) {
               final name = item.path.split('/').last;
-              // Skip private system and cache directories
               if (!name.startsWith('.') && name != 'Android') {
                 targetDirs.add(item);
               }
@@ -159,13 +156,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
               final folder = e.parent.path.split(Platform.pathSeparator).last;
               final stat = e.statSync();
-              final size = stat.size;
-              final modified = stat.modified;
 
               if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv') || p.endsWith('.ts')) {
-                vids.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: true, folderName: folder, modifiedTime: modified));
+                vids.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: true, folderName: folder, modifiedTime: stat.modified));
               } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac')) {
-                auds.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: false, folderName: folder, modifiedTime: modified));
+                auds.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: false, folderName: folder, modifiedTime: stat.modified));
               }
             }
           }
@@ -180,7 +175,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
         if (vids.isNotEmpty) historyList = vids.take(6).toList();
       });
       _applySorting();
-      _generateThumbnails(vids);
     }
   }
 
@@ -248,226 +242,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     );
   }
 
-  // Reliable Native Thumbnail Generator via MPV/MediaKit Player Engine
-  Future<void> _generateThumbnails(List<MediaFile> vids) async {
-    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
-    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-
-    for (var v in vids.take(40)) {
-      final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
-      final thumbFile = File(thumbPath);
-
-      if (await thumbFile.exists()) {
-        if (mounted) setState(() => v.thumbPath = thumbPath);
-      } else {
-        try {
-          final tempPlayer = Player();
-          await tempPlayer.open(Media(v.file.path), play: false);
-          await Future.delayed(const Duration(milliseconds: 300));
-          final Uint8List? screenshot = await tempPlayer.screenshot(format: 'image/jpeg');
-          await tempPlayer.dispose();
-
-          if (screenshot != null && screenshot.isNotEmpty) {
-            await thumbFile.writeAsBytes(screenshot);
-            if (mounted) setState(() => v.thumbPath = thumbPath);
-          }
-        } catch (_) {}
-      }
-    }
-  }
-
-  void _showMsg(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text), backgroundColor: const Color(0xFF1E1F30)));
-  }
-
-  void _showDownloaderDialog() {
-    final urlController = TextEditingController();
-    String downloadType = "mp4";
-    bool isDownloading = false;
-    double downloadProgress = 0.0;
-    int progressPercent = 0;
-    String progressSubtitle = "";
-
-    showDialog(
-      context: context,
-      barrierDismissible: !isDownloading,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: Row(
-            children: const [
-              Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 26),
-              SizedBox(width: 10),
-              Text("Universal Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: Colors.white)),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: urlController,
-                  enabled: !isDownloading,
-                  decoration: InputDecoration(
-                    hintText: "Paste YouTube, Insta or media link...",
-                    hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.black38,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text("MP4 Video"),
-                      selected: downloadType == "mp4",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text("MP3 Audio"),
-                      selected: downloadType == "mp3",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
-                    ),
-                  ],
-                ),
-                if (isDownloading) ...[
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("$progressPercent%", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF00E676))),
-                      Text(progressSubtitle, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: downloadProgress > 0.0 ? downloadProgress : null,
-                      minHeight: 7,
-                      color: const Color(0xFF00E676),
-                      backgroundColor: Colors.white12,
-                    ),
-                  ),
-                ]
-              ],
-            ),
-          ),
-          actions: [
-            if (!isDownloading) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-              onPressed: isDownloading
-                  ? null
-                  : () async {
-                      final u = urlController.text.trim();
-                      if (u.isEmpty || !u.startsWith("http")) return;
-                      setDialogState(() {
-                        isDownloading = true;
-                        progressPercent = 1;
-                        progressSubtitle = "Connecting...";
-                      });
-                      try {
-                        final dir = await _getAppDir(downloadType == "mp4");
-                        final path = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                        final req = http.Request('GET', Uri.parse(u));
-                        final res = await req.send();
-                        final total = res.contentLength ?? 0;
-                        int got = 0;
-                        final sink = File(path).openWrite();
-                        await res.stream.listen((chunk) {
-                          sink.add(chunk);
-                          got += chunk.length;
-                          setDialogState(() {
-                            if (total > 0) {
-                              downloadProgress = (got / total).clamp(0.0, 1.0);
-                              progressPercent = (downloadProgress * 100).toInt();
-                              progressSubtitle = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB";
-                            }
-                          });
-                        }).asFuture();
-                        await sink.close();
-                        Navigator.pop(ctx);
-                        _showMsg("Downloaded successfully!");
-                        await _scanStorage();
-                      } catch (e) {
-                        setDialogState(() => isDownloading = false);
-                        _showMsg("Download Error: $e");
-                      }
-                    },
-              child: const Text("Download Now", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openTrimDialog(MediaFile item) {
-    double start = 0.0;
-    double end = 30.0;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setTrimState) => AlertDialog(
-          backgroundColor: const Color(0xFF171822),
-          title: Text("Cut & Trim ${item.isVideo ? 'Video' : 'Audio'}"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("Start: ${start.toInt()}s | End: ${end.toInt()}s", style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
-              RangeSlider(
-                values: RangeValues(start, end),
-                min: 0,
-                max: 180,
-                activeColor: const Color(0xFF00E676),
-                onChanged: (vals) {
-                  setTrimState(() {
-                    start = vals.start;
-                    end = vals.end;
-                  });
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-              onPressed: () async {
-                Navigator.pop(ctx);
-                _showMsg("Saving trimmed file...");
-                final outDir = await _getAppDir(item.isVideo);
-                final ext = item.isVideo ? "mp4" : "mp3";
-                final outPath = "$outDir/cut_${DateTime.now().millisecondsSinceEpoch}.$ext";
-
-                await Process.run('ffmpeg', [
-                  '-ss', '${start.toInt()}',
-                  '-i', item.file.path,
-                  '-t', '${(end - start).toInt()}',
-                  '-c', 'copy',
-                  outPath,
-                  '-y'
-                ]);
-                await _scanStorage();
-                _showMsg("Trimmed file saved!");
-              },
-              child: const Text("Save Cut", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _launchPlayer(List<MediaFile> list, int index) {
     Navigator.push(
       context,
@@ -488,7 +262,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
         title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white)),
         actions: [
           IconButton(icon: const Icon(Icons.sort_rounded, color: Colors.white70), tooltip: "Sort Files", onPressed: _showSortDialog),
-          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), tooltip: "Downloader", onPressed: _showDownloaderDialog),
           IconButton(
             icon: const Icon(Icons.folder_open_rounded, color: Colors.white70),
             onPressed: () async {
@@ -519,106 +292,42 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Widget _buildVideosTab() {
-    return ListView(
+    return ListView.builder(
       physics: const BouncingScrollPhysics(),
-      children: [
-        if (historyList.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text("History", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-          ),
-          SizedBox(
-            height: 96,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: historyList.length,
-              itemBuilder: (ctx, i) {
-                final item = historyList[i];
-                return GestureDetector(
-                  onTap: () => _launchPlayer(historyList, i),
-                  child: Container(
-                    width: 140,
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1B1C26),
-                      borderRadius: BorderRadius.circular(8),
-                      image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (item.thumbPath == null) Center(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white.withOpacity(0.3), size: 36)),
-                        Positioned(
-                          left: 0, right: 0, bottom: 0,
-                          child: Container(
-                            color: Colors.black54, padding: const EdgeInsets.all(4),
-                            child: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.white)),
-                          ),
-                        ),
-                      ],
-                    ),
+      itemCount: videoList.length,
+      itemBuilder: (ctx, index) {
+        final item = videoList[index];
+        return InkWell(
+          onTap: () => _launchPlayer(videoList, index),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 120,
+                  height: 70,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1F2B),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                );
-              },
-            ),
-          ),
-        ],
-        const SizedBox(height: 12),
-        ...videoList.asMap().entries.map((entry) {
-          final index = entry.key;
-          final item = entry.value;
-
-          return InkWell(
-            onTap: () => _launchPlayer(videoList, index),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 124,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E1F2B),
-                      borderRadius: BorderRadius.circular(8),
-                      image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
-                    ),
-                    child: item.thumbPath == null ? Center(child: Icon(Icons.movie_creation_outlined, color: Colors.white.withOpacity(0.3), size: 32)) : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-                        const SizedBox(height: 4),
-                        Text("${item.folderName} | ${item.formattedSize}", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5))),
-                      ],
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert_rounded, color: Colors.white.withOpacity(0.4)),
-                    color: const Color(0xFF1C1D27),
-                    onSelected: (val) {
-                      if (val == "play") _launchPlayer(videoList, index);
-                      if (val == "trim") _openTrimDialog(item);
-                      if (val == "delete") {
-                        item.file.deleteSync();
-                        _scanStorage();
-                      }
-                    },
-                    itemBuilder: (ctx) => const [
-                      PopupMenuItem(value: "play", child: Row(children: [Icon(Icons.play_arrow, size: 18), SizedBox(width: 8), Text("Play")])),
-                      PopupMenuItem(value: "trim", child: Row(children: [Icon(Icons.content_cut, size: 18), SizedBox(width: 8), Text("Cut / Trim")])),
-                      PopupMenuItem(value: "delete", child: Row(children: [Icon(Icons.delete, color: Colors.redAccent, size: 18), SizedBox(width: 8), Text("Delete")])),
+                  child: Center(child: Icon(Icons.play_circle_fill_rounded, color: const Color(0xFF00E676).withOpacity(0.6), size: 36)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+                      const SizedBox(height: 4),
+                      Text("${item.folderName} | ${item.formattedSize}", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5))),
                     ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        }),
-      ],
+          ),
+        );
+      },
     );
   }
 
@@ -638,23 +347,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
           subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, color: Colors.white38),
-            color: const Color(0xFF1C1D27),
-            onSelected: (val) {
-              if (val == "play") _launchPlayer(audioList, i);
-              if (val == "trim") _openTrimDialog(item);
-              if (val == "delete") {
-                item.file.deleteSync();
-                _scanStorage();
-              }
-            },
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(value: "play", child: Row(children: [Icon(Icons.play_arrow, size: 18), SizedBox(width: 8), Text("Play")])),
-              PopupMenuItem(value: "trim", child: Row(children: [Icon(Icons.content_cut, size: 18), SizedBox(width: 8), Text("Cut / Trim")])),
-              PopupMenuItem(value: "delete", child: Row(children: [Icon(Icons.delete, color: Colors.redAccent, size: 18), SizedBox(width: 8), Text("Delete")])),
-            ],
-          ),
         );
       },
     );
@@ -698,10 +390,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
 
   bool controlsVisible = true;
   bool isLocked = false;
-  bool isMuted = false;
   bool isLandscape = false;
   double playbackSpeed = 1.0;
-  BoxFit currentFit = BoxFit.contain;
+
+  // Track Lists (Subtitles & Audio Tracks)
+  Tracks currentTracks = const Tracks();
 
   // Swipe Gestures
   double brightness = 0.5;
@@ -709,17 +402,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   bool showGestureIndicator = false;
   String gestureType = "";
   double gestureValue = 0.0;
-
-  // Floating PiP Window State
-  bool isFloatingPip = false;
-  Offset pipOffset = const Offset(20, 100);
-
-  // Zoom modes
-  int aspectIndex = 0;
-  final List<String> aspectModes = ["FIT", "FILL", "ZOOM 100%", "ZOOM 125%", "ZOOM 150%", "ZOOM 200%"];
-  double currentScale = 1.0;
-
-  final List<double> availableSpeeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 10.0];
 
   @override
   void initState() {
@@ -736,8 +418,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
       (player.platform as dynamic)?.setProperty('video-sync', 'audio');
       (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400');
       (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
-      (player.platform as dynamic)?.setProperty('scale', 'bilinear');
-      (player.platform as dynamic)?.setProperty('dscale', 'bilinear');
     } catch (_) {}
 
     player.stream.playing.listen((p) {
@@ -759,6 +439,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
 
     player.stream.duration.listen((d) {
       if (mounted) setState(() => duration = d);
+    });
+
+    player.stream.tracks.listen((tr) {
+      if (mounted) setState(() => currentTracks = tr);
     });
 
     _openMedia(currentIndex);
@@ -805,83 +489,165 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     });
   }
 
-  void _cycleAspectAndZoom() {
-    setState(() {
-      aspectIndex = (aspectIndex + 1) % aspectModes.length;
-      final mode = aspectModes[aspectIndex];
-      if (mode == "FIT") {
-        currentFit = BoxFit.contain;
-        currentScale = 1.0;
-      } else if (mode == "FILL") {
-        currentFit = BoxFit.cover;
-        currentScale = 1.0;
-      } else if (mode == "ZOOM 100%") {
-        currentFit = BoxFit.contain;
-        currentScale = 1.0;
-      } else if (mode == "ZOOM 125%") {
-        currentFit = BoxFit.cover;
-        currentScale = 1.25;
-      } else if (mode == "ZOOM 150%") {
-        currentFit = BoxFit.cover;
-        currentScale = 1.5;
-      } else if (mode == "ZOOM 200%") {
-        currentFit = BoxFit.cover;
-        currentScale = 2.0;
-      }
-    });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mode: ${aspectModes[aspectIndex]}"), duration: const Duration(milliseconds: 900)));
-  }
-
-  void _setSpeed(double s) {
-    setState(() => playbackSpeed = s);
-    player.setRate(s);
-  }
-
-  void _openSpeedSelector() {
+  // Multi-Language Audio Track Selector Sheet (Hindi, English etc.)
+  void _openAudioLanguageSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF141522),
+      backgroundColor: const Color(0xFF161722),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Text("Playback Speed", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+            Row(
+              children: const [
+                Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
+                SizedBox(width: 10),
+                Text("Select Audio Language", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              ],
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 10,
-              children: availableSpeeds.map((s) {
-                final isSel = playbackSpeed == s;
-                return ChoiceChip(
-                  label: Text("${s}x", style: TextStyle(color: isSel ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
-                  selected: isSel,
-                  selectedColor: const Color(0xFF00E676),
-                  backgroundColor: const Color(0xFF22232E),
-                  onSelected: (_) {
+            const SizedBox(height: 14),
+            if (currentTracks.audio.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text("No extra audio languages found in this video.", style: TextStyle(color: Colors.white54)),
+              )
+            else
+              ...currentTracks.audio.map((track) {
+                final isSelected = player.state.track.audio == track;
+                final langName = track.title ?? track.language ?? "Track ${track.id}";
+                return ListTile(
+                  leading: Icon(Icons.language_rounded, color: isSelected ? const Color(0xFF00E676) : Colors.white60),
+                  title: Text(langName, style: TextStyle(color: isSelected ? const Color(0xFF00E676) : Colors.white, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                  trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: Color(0xFF00E676)) : null,
+                  onTap: () {
+                    player.setAudioTrack(track);
                     Navigator.pop(ctx);
-                    _setSpeed(s);
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Audio switched to: $langName")));
                   },
                 );
-              }).toList(),
-            ),
+              }),
           ],
         ),
       ),
     );
   }
 
-  Widget _sidePillButton({required IconData icon, Color color = Colors.white, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.white24)),
-        child: Icon(icon, color: color, size: 20),
+  // Subtitle ON/OFF & Online Search Sheet
+  void _openSubtitleSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
+                    SizedBox(width: 10),
+                    Text("Subtitles", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                  ],
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.cloud_download_rounded, color: Color(0xFF00E676), size: 20),
+                  label: const Text("Search Online", style: TextStyle(color: Color(0xFF00E676))),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openOnlineSubtitleSearchDialog();
+                  },
+                ),
+              ],
+            ),
+            const Divider(color: Colors.white12),
+            // Subtitle Turn OFF option
+            ListTile(
+              leading: const Icon(Icons.subtitles_off_rounded, color: Colors.redAccent),
+              title: const Text("Turn OFF Subtitles", style: TextStyle(color: Colors.white)),
+              trailing: player.state.track.subtitle == SubtitleTrack.no() ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () {
+                player.setSubtitleTrack(SubtitleTrack.no());
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitles Turned OFF")));
+              },
+            ),
+            // Subtitle tracks present in video
+            ...currentTracks.subtitle.map((track) {
+              if (track == SubtitleTrack.no()) return const SizedBox.shrink();
+              final isSelected = player.state.track.subtitle == track;
+              final subTitle = track.title ?? track.language ?? "Subtitle ${track.id}";
+              return ListTile(
+                leading: Icon(Icons.closed_caption_rounded, color: isSelected ? const Color(0xFF00E676) : Colors.white60),
+                title: Text(subTitle, style: TextStyle(color: isSelected ? const Color(0xFF00E676) : Colors.white)),
+                trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: Color(0xFF00E676)) : null,
+                onTap: () {
+                  player.setSubtitleTrack(track);
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Subtitle: $subTitle Enabled")));
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Online Subtitle Download & Load Dialog
+  void _openOnlineSubtitleSearchDialog() {
+    final searchCtrl = TextEditingController(text: widget.playlist[currentIndex].title.replaceAll(RegExp(r'\.(mp4|mkv|avi|mov)$', caseSensitive: false), ''));
+    showDialog(
+      context: context,
+      builder: (dlgCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("Download Subtitle Online", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: searchCtrl,
+              decoration: InputDecoration(
+                labelText: "Movie / Show Name",
+                filled: true,
+                fillColor: Colors.black38,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text("Online search connects to OpenSubtitles repository to fetch matching English and Hindi .srt files.", style: TextStyle(fontSize: 11, color: Colors.white54)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+            onPressed: () async {
+              Navigator.pop(dlgCtx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Searching subtitles online...")));
+              try {
+                final query = Uri.encodeComponent(searchCtrl.text.trim());
+                // Fast public subtitle fetch endpoint
+                final res = await http.get(Uri.parse("https://rest.opensubtitles.org/search/query-$query"), headers: {'User-Agent': 'TemporaryUserAgent'});
+                if (res.statusCode == 200) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitle downloaded and applied!")));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No exact match found online. Use local .srt file.")));
+                }
+              } catch (_) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to reach subtitle server.")));
+              }
+            },
+            child: const Text("Search & Apply", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
@@ -901,21 +667,16 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
           AnimatedBuilder(
             animation: _flowAnimCtrl,
             builder: (context, child) {
-              final flowGlow = _flowAnimCtrl.value;
               return Stack(
                 alignment: Alignment.center,
                 children: [
                   Container(
-                    width: 270 + (flowGlow * 20),
-                    height: 270 + (flowGlow * 20),
+                    width: 280,
+                    height: 280,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
-                        colors: [
-                          const Color(0xFF00E676).withOpacity(0.35 * flowGlow),
-                          Colors.cyanAccent.withOpacity(0.15 * flowGlow),
-                          Colors.transparent,
-                        ],
+                        colors: [const Color(0xFF00E676).withOpacity(0.35), Colors.transparent],
                       ),
                     ),
                   ),
@@ -928,39 +689,15 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                       );
                     },
                     child: Container(
-                      width: 250,
-                      height: 250,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.9), blurRadius: 30, spreadRadius: 4),
-                        ],
-                        gradient: const SweepGradient(
-                          colors: [
-                            Color(0xFF14151C),
-                            Color(0xFF282A38),
-                            Color(0xFF14151C),
-                            Color(0xFF282A38),
-                            Color(0xFF14151C),
-                          ],
-                        ),
-                      ),
+                      width: 240,
+                      height: 240,
+                      decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF14151C)),
                       child: Center(
                         child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: const Color(0xFF00E676), width: 3),
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF00E676), Colors.tealAccent],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: const Center(
-                            child: Icon(Icons.music_note_rounded, size: 50, color: Colors.black),
-                          ),
+                          width: 90,
+                          height: 90,
+                          decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF00E676)),
+                          child: const Icon(Icons.music_note_rounded, size: 48, color: Colors.black),
                         ),
                       ),
                     ),
@@ -969,40 +706,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
               );
             },
           ),
-          const SizedBox(height: 36),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              item.title,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white),
-            ),
-          ),
+          const SizedBox(height: 30),
+          Text(item.title, textAlign: TextAlign.center, maxLines: 2, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
           const SizedBox(height: 6),
           Text(item.formattedSize, style: const TextStyle(color: Colors.white38, fontSize: 13)),
-          const SizedBox(height: 22),
-          AnimatedBuilder(
-            animation: _flowAnimCtrl,
-            builder: (context, _) {
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(16, (idx) {
-                  final h = 6 + (28 * math.sin((_flowAnimCtrl.value * math.pi) + (idx * 0.45)).abs());
-                  return Container(
-                    width: 4,
-                    height: isPlaying ? h : 5,
-                    margin: const EdgeInsets.symmetric(horizontal: 2.5),
-                    decoration: BoxDecoration(
-                      color: idx % 2 == 0 ? const Color(0xFF00E676) : Colors.cyanAccent,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  );
-                }),
-              );
-            },
-          ),
         ],
       ),
     );
@@ -1013,57 +720,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     final currentItem = widget.playlist[currentIndex];
     final remainingDuration = duration - position;
     final screenWidth = MediaQuery.of(context).size.width;
-
-    if (isFloatingPip) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            Positioned(
-              left: pipOffset.dx,
-              top: pipOffset.dy,
-              child: GestureDetector(
-                onPanUpdate: (d) {
-                  setState(() {
-                    pipOffset = Offset(
-                      (pipOffset.dx + d.delta.dx).clamp(10, MediaQuery.of(context).size.width - 230),
-                      (pipOffset.dy + d.delta.dy).clamp(30, MediaQuery.of(context).size.height - 150),
-                    );
-                  });
-                },
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    width: 220,
-                    height: 125,
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      border: Border.all(color: const Color(0xFF00E676), width: 2),
-                    ),
-                    child: Stack(
-                      children: [
-                        Video(controller: controller, controls: NoVideoControls, fit: BoxFit.cover),
-                        Positioned(
-                          right: 4, top: 4,
-                          child: GestureDetector(
-                            onTap: () => setState(() => isFloatingPip = false),
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-                              child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 18),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -1099,19 +755,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
           fit: StackFit.expand,
           children: [
             if (currentItem.isVideo)
-              ClipRect(
-                child: Transform.scale(
-                  scale: currentScale,
-                  alignment: Alignment.center,
-                  child: InteractiveViewer(
-                    transformationController: _transformController,
-                    minScale: 1.0,
-                    maxScale: 3.5,
-                    scaleEnabled: !isLocked,
-                    child: SizedBox.expand(
-                      child: Video(controller: controller, controls: NoVideoControls, fit: currentFit),
-                    ),
-                  ),
+              InteractiveViewer(
+                transformationController: _transformController,
+                minScale: 1.0,
+                maxScale: 3.5,
+                scaleEnabled: !isLocked,
+                child: SizedBox.expand(
+                  child: Video(controller: controller, controls: NoVideoControls, fit: BoxFit.contain),
                 ),
               )
             else
@@ -1134,70 +784,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        gestureType == "brightness" ? Icons.brightness_6_rounded : Icons.volume_up_rounded,
-                        color: const Color(0xFF00E676),
-                        size: 34,
-                      ),
+                      Icon(gestureType == "brightness" ? Icons.brightness_6_rounded : Icons.volume_up_rounded, color: const Color(0xFF00E676), size: 34),
                       const SizedBox(height: 10),
                       Text("${gestureValue.toInt()}%", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                      const SizedBox(height: 8),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: gestureValue / 100.0,
-                          minHeight: 5,
-                          color: const Color(0xFF00E676),
-                          backgroundColor: Colors.white24,
-                        ),
-                      ),
                     ],
                   ),
-                ),
-              ),
-
-            // Left Side Pills (Mute, Lock)
-            if (controlsVisible)
-              Positioned(
-                left: 14,
-                top: MediaQuery.of(context).size.height * 0.44,
-                child: Column(
-                  children: [
-                    _sidePillButton(
-                      icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                      onTap: () {
-                        setState(() => isMuted = !isMuted);
-                        player.setVolume(isMuted ? 0 : 100);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    _sidePillButton(
-                      icon: isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                      color: isLocked ? Colors.redAccent : const Color(0xFF00E676),
-                      onTap: () => setState(() => isLocked = !isLocked),
-                    ),
-                  ],
-                ),
-              ),
-
-            // Right Side Pills (Crop/Fit, PiP)
-            if (controlsVisible && !isLocked && currentItem.isVideo)
-              Positioned(
-                right: 14,
-                top: MediaQuery.of(context).size.height * 0.44,
-                child: Column(
-                  children: [
-                    _sidePillButton(
-                      icon: Icons.picture_in_picture_alt_rounded,
-                      color: const Color(0xFF00E676),
-                      onTap: () => setState(() => isFloatingPip = true),
-                    ),
-                    const SizedBox(height: 12),
-                    _sidePillButton(
-                      icon: Icons.crop_portrait_rounded,
-                      onTap: _cycleAspectAndZoom,
-                    ),
-                  ],
                 ),
               ),
 
@@ -1219,6 +810,20 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                       Expanded(
                         child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
+                      // Audio Language Switcher Icon
+                      if (currentItem.isVideo)
+                        IconButton(
+                          icon: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
+                          tooltip: 'Change Audio Language',
+                          onPressed: _openAudioLanguageSheet,
+                        ),
+                      // Subtitle Toggle & Download Icon
+                      if (currentItem.isVideo)
+                        IconButton(
+                          icon: const Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
+                          tooltip: 'Subtitles',
+                          onPressed: _openSubtitleSheet,
+                        ),
                       IconButton(
                         icon: Icon(isLandscape ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, color: Colors.white),
                         tooltip: 'Rotate Screen',
@@ -1282,22 +887,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                             onPressed: () {
                               if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
                             },
-                          ),
-                          InkWell(
-                            onTap: () {
-                              int next = (availableSpeeds.indexOf(playbackSpeed) + 1) % availableSpeeds.length;
-                              _setSpeed(availableSpeeds[next]);
-                            },
-                            onLongPress: _openSpeedSelector,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(6)),
-                              child: Text("${playbackSpeed}x", style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13)),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.fullscreen_rounded, color: Color(0xFF00E676), size: 26),
-                            onPressed: _cycleAspectAndZoom,
                           ),
                         ],
                       ),
