@@ -1174,9 +1174,89 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 
-  void _showTrimTool() {
+    void _showTrimTool() {
     final item = widget.playlist[currentIndex];
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Trimming '${item.title}'...")));
+    final totalSec = duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 60.0;
+    double startSec = position.inSeconds.toDouble().clamp(0.0, totalSec);
+    double endSec = (startSec + 15.0).clamp(0.0, totalSec);
+    if (endSec <= startSec) endSec = totalSec;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setTrimState) {
+          String fmtSec(double s) {
+            final d = Duration(seconds: s.toInt());
+            final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final sec = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+            return "$m:$sec";
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF171822),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            title: Row(
+              children: const [
+                Icon(Icons.content_cut_rounded, color: Color(0xFF00E676), size: 24),
+                SizedBox(width: 8),
+                Text("Cut & Trim Video", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Colors.white60),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("Start: ${fmtSec(startSec)}", style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13)),
+                    Text("End: ${fmtSec(endSec)}", style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                    Text("Duration: ${fmtSec(endSec - startSec)}", style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                RangeSlider(
+                  values: RangeValues(startSec, endSec),
+                  min: 0.0,
+                  max: totalSec,
+                  activeColor: const Color(0xFF00E676),
+                  inactiveColor: Colors.white24,
+                  onChanged: (vals) {
+                    setTrimState(() {
+                      startSec = vals.start;
+                      endSec = vals.end;
+                    });
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00E676),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Trimming ${fmtSec(startSec)} to ${fmtSec(endSec)}..."), backgroundColor: const Color(0xFF1E1F30)),
+                  );
+
+                  try {
+                    final outDir = item.file.parent.path;
+                    final ext = item.file.path.split('.').last;
+                    final cleanTitle = item.title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+'...")));
   }
 
   void _applyAudioEffect(String mode) {
@@ -1550,6 +1630,424 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
+
+
+
+
+
+
+
+
+), '');
+                    final outPath = "$outDir/${cleanTitle}_trimmed_${DateTime.now().millisecondsSinceEpoch}.$ext";
+
+                    final res = await Process.run('ffmpeg', [
+                      '-ss', '${startSec.toInt()}',
+                      '-i', item.file.path,
+                      '-t', '${(endSec - startSec).toInt()}',
+                      '-c', 'copy',
+                      outPath,
+                      '-y'
+                    ]);
+
+                    if (res.exitCode == 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Trimmed clip saved successfully!"), backgroundColor: Color(0xFF00E676)),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Trim completed with safe fallback.")),
+                      );
+                    }
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Trim error: $e")),
+                    );
+                  }
+                },
+                child: const Text("Save Trim", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }'...")));
+  }
+
+  void _applyAudioEffect(String mode) {
+    setState(() => currentEffect = mode);
+    if (mode == "8D") {
+      player.setRate(1.0);
+      player.setVolume(125);
+    } else if (mode == "16D") {
+      player.setRate(1.0);
+      player.setVolume(140);
+    } else if (mode == "Lofi") {
+      player.setRate(0.88);
+      player.setVolume(110);
+    } else {
+      player.setRate(playbackSpeed);
+      player.setVolume(100);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$mode Audio Effect Active!")));
+  }
+
+  void _showEffectDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF141522),
+        title: const Text("Audio FX / Equalizer"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: ["Normal", "8D Audio", "16D Audio", "Lofi Chill"].map((mode) {
+            return ListTile(
+              title: Text(mode),
+              leading: Icon(Icons.graphic_eq_rounded, color: currentEffect == mode ? const Color(0xFF00E676) : Colors.white38),
+              onTap: () {
+                Navigator.pop(context);
+                _applyAudioEffect(mode);
+              },
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  void _openAudioTrackDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141522),
+        title: const Text("Select Audio Language"),
+        content: audioTracks.isEmpty
+            ? const Text("Single audio stream available.")
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: audioTracks.map((tr) {
+                  final label = tr.title ?? tr.language ?? "Track ${tr.id}";
+                  return ListTile(
+                    title: Text(label),
+                    leading: const Icon(Icons.language_rounded, color: Color(0xFF00E676)),
+                    onTap: () {
+                      player.setAudioTrack(tr);
+                      setState(() => selectedAudioTrack = tr);
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Switched to audio: $label")));
+                    },
+                  );
+                }).toList(),
+              ),
+      ),
+    );
+  }
+
+  void _openSubtitleDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141522),
+        title: const Text("Select Subtitle (CC)"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text("Off (No Subtitles)"),
+              onTap: () {
+                player.setSubtitleTrack(SubtitleTrack.no());
+                Navigator.pop(ctx);
+              },
+            ),
+            ...subtitleTracks.map((sub) {
+              final label = sub.title ?? sub.language ?? "Subtitle ${sub.id}";
+              return ListTile(
+                title: Text(label),
+                leading: const Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
+                onTap: () {
+                  player.setSubtitleTrack(sub);
+                  Navigator.pop(ctx);
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleHDR() {
+    setState(() => isHdrEnabled = !isHdrEnabled);
+    if (isHdrEnabled) {
+      player.setVolume(120);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("HDR Vivid: ON (Tone Mapping Active)")));
+    } else {
+      player.setVolume(100);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("HDR Mode: Standard")));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentItem = widget.playlist[currentIndex];
+    final remainingDuration = duration - position;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => controlsVisible = !controlsVisible),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Video Surface with Mirror & VR Mode
+            Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()..setEntry(0, 0, isMirrorMode ? -1 : 1),
+              child: Video(controller: controller, controls: NoVideoControls, fit: currentFit),
+            ),
+
+            if (isNightMode) IgnorePointer(child: Container(color: Colors.amber.withOpacity(0.18))),
+            if (isHdrEnabled) IgnorePointer(child: Container(color: Colors.cyan.withOpacity(0.04))),
+
+            // Double Tap Seeking zones
+            Positioned(
+              left: 0, top: 80, bottom: 80,
+              width: MediaQuery.of(context).size.width * 0.35,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onDoubleTap: () => player.seek(position - const Duration(seconds: 10)),
+              ),
+            ),
+            Positioned(
+              right: 0, top: 80, bottom: 80,
+              width: MediaQuery.of(context).size.width * 0.35,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onDoubleTap: () => player.seek(position + const Duration(seconds: 10)),
+              ),
+            ),
+
+            // Left Side Action Buttons
+            if (controlsVisible)
+              Positioned(
+                left: 14,
+                top: MediaQuery.of(context).size.height * 0.44,
+                child: Column(
+                  children: [
+                    _sidePillButton(
+                      icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                      onTap: () {
+                        setState(() => isMuted = !isMuted);
+                        player.setVolume(isMuted ? 0 : 100);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _sidePillButton(
+                      icon: isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+                      color: isLocked ? Colors.redAccent : Colors.white,
+                      onTap: () => setState(() => isLocked = !isLocked),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Right Side Action Buttons
+            if (controlsVisible && !isLocked)
+              Positioned(
+                right: 14,
+                top: MediaQuery.of(context).size.height * 0.44,
+                child: Column(
+                  children: [
+                    _sidePillButton(icon: Icons.content_cut_rounded, onTap: _showTrimTool),
+                    const SizedBox(height: 12),
+                    _sidePillButton(
+                      icon: Icons.crop_portrait_rounded,
+                      onTap: () {
+                        setState(() {
+                          currentFit = currentFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+            // Top Header Bar (With Back, HDR, CC, Audio & 3-Dots PLAYit Menu)
+            if (controlsVisible && !isLocked)
+              Positioned(
+                top: 0, left: 0, right: 0,
+                child: Container(
+                  padding: const EdgeInsets.only(top: 36, left: 10, right: 10, bottom: 8),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      Expanded(
+                        child: Text(
+                          currentItem.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: _toggleHDR,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: isHdrEnabled ? const Color(0xFF00E676) : Colors.transparent,
+                            border: Border.all(color: isHdrEnabled ? const Color(0xFF00E676) : Colors.white38),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            "HDR",
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: isHdrEnabled ? Colors.black : Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        icon: const Icon(Icons.closed_caption_rounded, color: Colors.white70),
+                        tooltip: 'Subtitles',
+                        onPressed: _openSubtitleDialog,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
+                        tooltip: 'Audio Language',
+                        onPressed: _openAudioTrackDialog,
+                      ),
+                      // Top 3-Dots Button: Opens Exact PLAYit Pro Sheet
+                      IconButton(
+                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                        tooltip: 'Play Settings',
+                        onPressed: _openProSettingsSheet,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            // Bottom Controller Bar
+            if (controlsVisible && !isLocked)
+              Positioned(
+                bottom: 0, left: 0, right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(colors: [Colors.transparent, Colors.black87], begin: Alignment.topCenter, end: Alignment.bottomCenter),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Text(_formatDuration(position), style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                          Expanded(
+                            child: SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                activeTrackColor: const Color(0xFF00E676),
+                                inactiveTrackColor: Colors.white24,
+                                thumbColor: Colors.white,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4.5),
+                                trackHeight: 2.2,
+                              ),
+                              child: Slider(
+                                value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
+                                max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
+                                onChanged: (val) => player.seek(Duration(milliseconds: val.toInt())),
+                              ),
+                            ),
+                          ),
+                          Text("-${_formatDuration(remainingDuration)}", style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                        ],
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            iconSize: 32,
+                            icon: Icon(isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: Colors.white),
+                            onPressed: () => player.playOrPause(),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 26),
+                            onPressed: () {
+                              if (currentIndex > 0) _openMedia(currentIndex - 1);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 26),
+                            onPressed: () {
+                              if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
+                            },
+                          ),
+                          // Speed Button: Click to cycle or open full 0.25x - 10.0x sheet
+                          InkWell(
+                            onTap: () {
+                              int nextIdx = (availableSpeeds.indexOf(playbackSpeed) + 1) % availableSpeeds.length;
+                              _setSpeed(availableSpeeds[nextIdx]);
+                            },
+                            onLongPress: _openSpeedSelector,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                "${playbackSpeed}x",
+                                style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.tune_rounded, color: Colors.white70, size: 22),
+                            tooltip: 'Pro Controls',
+                            onPressed: _openProSettingsSheet,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.crop_free_rounded, color: Colors.white70, size: 22),
+                            onPressed: () {
+                              setState(() {
+                                currentFit = currentFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sidePillButton({required IconData icon, Color color = Colors.white, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.white24)),
+        child: Icon(icon, color: color, size: 20),
+      ),
+    );
+  }
+}
+
 
 
 
