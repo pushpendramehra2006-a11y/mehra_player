@@ -1,7 +1,6 @@
 ﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -37,7 +36,6 @@ class MehraApp extends StatelessWidget {
   }
 }
 
-// Model for media item with metadata & cached thumb
 class MediaItem {
   final File file;
   final String name;
@@ -61,7 +59,6 @@ class MediaItem {
   }
 }
 
-// ---------------- HOME SCREEN (PLAYit Style Library) ----------------
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -74,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<MediaItem> videos = [];
   List<MediaItem> audios = [];
   bool isLoading = true;
+  bool isConverting = false;
 
   @override
   void initState() {
@@ -82,16 +80,31 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _scanStorage();
   }
 
+  Future<String> _getAudioOutputDir() async {
+    if (Platform.isAndroid) {
+      final musicDir = Directory('/storage/emulated/0/Music/MehraPlayer');
+      if (!await musicDir.exists()) await musicDir.create(recursive: true);
+      return musicDir.path;
+    } else {
+      final home = Platform.environment['USERPROFILE'] ?? 'C:';
+      final dir = Directory('$home\\Music\\MehraPlayer');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir.path;
+    }
+  }
+
   Future<void> _scanStorage() async {
     setState(() => isLoading = true);
     List<Directory> targetDirs = [];
+
     if (Platform.isAndroid) {
       targetDirs = [
-        Directory('/storage/emulated/0/DCIM/Camera'),
         Directory('/storage/emulated/0/DCIM'),
         Directory('/storage/emulated/0/Movies'),
         Directory('/storage/emulated/0/Download'),
         Directory('/storage/emulated/0/Music'),
+        Directory('/storage/emulated/0/WhatsApp/Media'),
+        Directory('/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media'),
       ];
     } else {
       final home = Platform.environment['USERPROFILE'] ?? 'C:';
@@ -113,16 +126,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             if (e is File) {
               final p = e.path.toLowerCase();
               final fname = e.path.split(Platform.pathSeparator).last;
-              if (fname.startsWith('.')) continue; // ignore hidden/trashed
+              if (fname.startsWith('.')) continue;
 
-              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov')) {
+              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp')) {
                 vList.add(MediaItem(
                   file: e,
                   name: fname,
                   sizeInBytes: e.lengthSync(),
                   isVideo: true,
                 ));
-              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac')) {
+              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.aac') || p.endsWith('.ogg')) {
                 aList.add(MediaItem(
                   file: e,
                   name: fname,
@@ -144,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       });
     }
 
-    // Lazy load thumbnails in background
+    // Background thumbnail loading
     for (var item in vList) {
       try {
         final thumb = await VideoThumbnail.thumbnailData(
@@ -157,6 +170,58 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           setState(() => item.thumbnail = thumb);
         }
       } catch (_) {}
+    }
+  }
+
+  Future<void> _convertVideoToAudio(MediaItem videoItem) async {
+    setState(() => isConverting = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Extracting audio from '${videoItem.name}'..."),
+        duration: const Duration(seconds: 3),
+        backgroundColor: const Color(0xFF1E1F30),
+      ),
+    );
+
+    try {
+      final outDir = await _getAudioOutputDir();
+      final cleanName = videoItem.name.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '');
+      final outPath = Platform.isWindows
+          ? '$outDir\\${cleanName}_audio_${DateTime.now().millisecondsSinceEpoch}.mp3'
+          : '$outDir/${cleanName}_audio_${DateTime.now().millisecondsSinceEpoch}.mp3';
+
+      final res = await Process.run('ffmpeg', [
+        '-i', videoItem.file.path,
+        '-vn',
+        '-acodec', 'libmp3lame',
+        '-q:a', '2',
+        outPath,
+        '-y'
+      ]);
+
+      if (res.exitCode == 0) {
+        // Rescan storage to pick up new audio immediately
+        await _scanStorage();
+        if (mounted) {
+          _tabController.animateTo(1); // Switch to Audio tab automatically
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Audio extract complete! Switched to Audio tab."),
+              backgroundColor: Color(0xFF00E676),
+            ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Audio extraction failed. Check media file.")),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    } finally {
+      if (mounted) setState(() => isConverting = false);
     }
   }
 
@@ -223,13 +288,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           unselectedLabelColor: Colors.white54,
           labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           tabs: [
-            Tab(text: "Video (${videos.length})"),
-            Tab(text: "Audio (${audios.length})"),
+            Tab(text: "All Videos (${videos.length})"),
+            Tab(text: "All Audios (${audios.length})"),
           ],
         ),
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)))
+      body: isLoading || isConverting
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+                  const SizedBox(height: 14),
+                  Text(
+                    isConverting ? "Extracting Video to Audio (MP3)..." : "Scanning all device media...",
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            )
           : TabBarView(
               controller: _tabController,
               children: [
@@ -263,7 +340,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
             child: Row(
               children: [
-                // Thumbnail card
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
@@ -294,7 +370,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Title and Meta Info (PLAYit layout)
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -314,7 +389,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               border: Border.all(color: Colors.white24),
                               borderRadius: BorderRadius.circular(3),
                             ),
-                            child: const Text("1080p", style: TextStyle(fontSize: 9.5, color: Colors.white70)),
+                            child: const Text("Video", style: TextStyle(fontSize: 9.5, color: Colors.white70)),
                           ),
                           const SizedBox(width: 6),
                           Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white54)),
@@ -323,9 +398,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ],
                   ),
                 ),
+                // Video to Audio Quick Convert Button
                 IconButton(
-                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white38),
-                  onPressed: () {},
+                  icon: const Icon(Icons.music_note_rounded, color: Color(0xFF00E676)),
+                  tooltip: 'Convert to Audio (MP3)',
+                  onPressed: () => _convertVideoToAudio(item),
                 ),
               ],
             ),
@@ -344,27 +421,34 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       itemCount: audios.length,
       itemBuilder: (context, i) {
         final item = audios[i];
-        return ListTile(
-          onTap: () => _openPlayer(audios, i),
-          leading: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: const Color(0xFF8B5CF6).withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.music_note_rounded, color: Color(0xFF8B5CF6)),
+        return Card(
+          color: const Color(0xFF141522),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: Colors.white.withOpacity(0.04)),
           ),
-          title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
-          subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
-          trailing: const Icon(Icons.play_circle_outline_rounded, color: Colors.white38),
+          child: ListTile(
+            onTap: () => _openPlayer(audios, i),
+            leading: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFF8B5CF6).withOpacity(0.18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.music_note_rounded, color: Color(0xFF8B5CF6)),
+            ),
+            title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500)),
+            subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
+            trailing: const Icon(Icons.play_circle_fill_rounded, color: Color(0xFF00E676), size: 28),
+          ),
         );
       },
     );
   }
 }
 
-// ---------------- PLAYIT STYLE PLAYER SCREEN ----------------
+// ---------------- PLAYER SCREEN ----------------
 class PlayerScreen extends StatefulWidget {
   final List<MediaItem> playlist;
   final int initialIndex;
@@ -375,7 +459,7 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderStateMixin {
   late final player = Player(
     configuration: const PlayerConfiguration(
       bufferSize: 64 * 1024 * 1024,
@@ -397,7 +481,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
 
-  // UI & Features
   bool isControlsVisible = true;
   bool isLocked = false;
   bool isMuted = false;
@@ -407,11 +490,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   double speed = 1.0;
   BoxFit currentFit = BoxFit.contain;
   String soundProfile = "Normal";
+  late AnimationController pulseController;
 
   @override
   void initState() {
     super.initState();
     currentIndex = widget.initialIndex;
+    pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
 
     player.stream.playing.listen((p) {
       if (mounted) setState(() => isPlaying = p);
@@ -428,6 +516,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    pulseController.dispose();
     player.dispose();
     super.dispose();
   }
@@ -482,12 +571,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     },
                   ),
                   _sheetItem(
-                    icon: Icons.content_cut_rounded,
-                    label: "Cut\nTrim",
+                    icon: Icons.music_note_rounded,
+                    label: "Video to\nAudio MP3",
                     active: false,
-                    onTap: () {
+                    onTap: () async {
                       Navigator.pop(ctx);
-                      _openTrimDialog();
+                      final currentItem = widget.playlist[currentIndex];
+                      if (!currentItem.isVideo) {
+                        showMsg("Yeh already audio file hai!");
+                        return;
+                      }
+                      showMsg("Extracting audio in background...");
+                      final outDir = currentItem.file.parent.path;
+                      final outPath = "$outDir/${currentItem.name.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '')}_audio.mp3";
+                      await Process.run('ffmpeg', [
+                        '-i', currentItem.file.path,
+                        '-vn',
+                        '-acodec', 'libmp3lame',
+                        outPath,
+                        '-y'
+                      ]);
+                      showMsg("Saved MP3: $outPath");
                     },
                   ),
                   _sheetItem(
@@ -511,7 +615,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ],
               ),
               const Divider(color: Colors.white12),
-              // Brightness Row
               Row(
                 children: [
                   const Icon(Icons.brightness_medium_rounded, size: 20, color: Colors.white54),
@@ -597,67 +700,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  void _openTrimDialog() {
-    final currentItem = widget.playlist[currentIndex];
-    double startVal = 0.0;
-    double endVal = duration.inSeconds > 30 ? 30.0 : duration.inSeconds.toDouble();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF141522),
-          title: const Text('Cut & Trim'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                "Start: ${formatTime(Duration(seconds: startVal.toInt()))}  |  End: ${formatTime(Duration(seconds: endVal.toInt()))}",
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF00E676)),
-              ),
-              RangeSlider(
-                activeColor: const Color(0xFF8B5CF6),
-                values: RangeValues(startVal, endVal),
-                min: 0,
-                max: duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1.0,
-                onChanged: (vals) {
-                  setDialogState(() {
-                    startVal = vals.start;
-                    endVal = vals.end;
-                  });
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
-              onPressed: () async {
-                Navigator.pop(ctx);
-                final outPath = "${currentItem.file.parent.path}/cut_${DateTime.now().millisecondsSinceEpoch}.mp4";
-                showMsg("Exporting cut file...");
-                await Process.run('ffmpeg', [
-                  '-ss', '${startVal.toInt()}',
-                  '-i', currentItem.file.path,
-                  '-t', '${(endVal - startVal).toInt()}',
-                  '-c', 'copy',
-                  outPath,
-                  '-y'
-                ]);
-                showMsg("Cut Video Saved!");
-              },
-              child: const Text('Export Cut File', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final currentItem = widget.playlist[currentIndex];
+    final isAudio = !currentItem.isVideo;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -666,28 +712,75 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Video Viewport with Mirror Mode
-            Transform(
-              alignment: Alignment.center,
-              transform: Matrix4.identity()..setEntry(0, 0, mirrorMode ? -1 : 1),
-              child: Video(
-                controller: controller,
-                controls: NoVideoControls,
-                fit: currentFit,
+            // Stage: Audio Visualizer or Video Viewport
+            if (isAudio)
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    colors: [Color(0xFF2E1065), Color(0xFF08080C)],
+                    radius: 0.9,
+                  ),
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedBuilder(
+                        animation: pulseController,
+                        builder: (context, child) {
+                          final scale = isPlaying ? 1.0 + (pulseController.value * 0.08) : 1.0;
+                          return Transform.scale(
+                            scale: scale,
+                            child: Container(
+                              width: 140,
+                              height: 140,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: const LinearGradient(colors: [Color(0xFF8B5CF6), Color(0xFF00E676)]),
+                                boxShadow: [
+                                  BoxShadow(color: const Color(0xFF8B5CF6).withOpacity(0.4), blurRadius: 30),
+                                ],
+                              ),
+                              child: const Icon(Icons.audiotrack_rounded, size: 70, color: Colors.white),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Text(
+                          currentItem.name,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        soundProfile != "Normal" ? "$soundProfile Active" : "Hi-Res Audio Playback",
+                        style: const TextStyle(color: Color(0xFF00E676), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.identity()..setEntry(0, 0, mirrorMode ? -1 : 1),
+                child: Video(
+                  controller: controller,
+                  controls: NoVideoControls,
+                  fit: currentFit,
+                ),
               ),
-            ),
 
-            // Night Mode Overlay
+            // Dim / Night filters
             if (nightMode)
-              IgnorePointer(
-                child: Container(color: Colors.amber.withOpacity(0.18)),
-              ),
-
-            // Brightness Overlay
+              IgnorePointer(child: Container(color: Colors.amber.withOpacity(0.18))),
             if (brightness < 0.98)
-              IgnorePointer(
-                child: Container(color: Colors.black.withOpacity(1.0 - brightness)),
-              ),
+              IgnorePointer(child: Container(color: Colors.black.withOpacity(1.0 - brightness))),
 
             // Double Tap Seeking zones
             Positioned(
@@ -717,7 +810,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
 
-            // Left Side Quick Buttons (Screenshot 3 style)
+            // Left Side Quick Buttons
             if (isControlsVisible)
               Positioned(
                 left: 14,
@@ -741,31 +834,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
 
-            // Right Side Quick Buttons
-            if (isControlsVisible && !isLocked)
-              Positioned(
-                right: 14,
-                top: MediaQuery.of(context).size.height * 0.42,
-                child: Column(
-                  children: [
-                    _sideCircleBtn(
-                      icon: Icons.content_cut_rounded,
-                      onTap: _openTrimDialog,
-                    ),
-                    const SizedBox(height: 14),
-                    _sideCircleBtn(
-                      icon: Icons.aspect_ratio_rounded,
-                      onTap: () {
-                        setState(() {
-                          currentFit = currentFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-            // Top Header Bar (Screenshot 3 PLAYit Header)
+            // Top Header Bar
             if (isControlsVisible && !isLocked)
               Positioned(
                 top: 0,
@@ -800,7 +869,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           border: Border.all(color: Colors.white38),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text("HDR", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                        child: Text(isAudio ? "MP3" : "HDR", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                       ),
                       const SizedBox(width: 8),
                       IconButton(
@@ -812,7 +881,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
 
-            // Bottom Controller Bar (Screenshot 3 layout)
+            // Bottom Controller Bar
             if (isControlsVisible && !isLocked)
               Positioned(
                 bottom: 0,
@@ -830,7 +899,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Slider Row
                       Row(
                         children: [
                           Text(formatTime(position), style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
@@ -853,7 +921,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           Text(formatTime(duration), style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
                         ],
                       ),
-                      // Controls Row
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -874,7 +941,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               if (currentIndex + 1 < widget.playlist.length) _playIndex(currentIndex + 1);
                             },
                           ),
-                          // Speed
                           TextButton(
                             onPressed: () {
                               setState(() {
