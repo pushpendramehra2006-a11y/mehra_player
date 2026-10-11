@@ -383,7 +383,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   color: const Color(0xFF00E676).withOpacity(0.18),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.downloadING_rounded, color: Color(0xFF00E676), size: 24),
+                child: const Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 24),
               ),
               const SizedBox(width: 10),
               const Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
@@ -1479,6 +1479,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
