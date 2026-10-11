@@ -896,17 +896,10 @@ class PlayitVideoPlayer extends StatefulWidget {
 
 class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
   late final player = Player(
-    configuration: const PlayerConfiguration(
+    configuration: PlayerConfiguration(
       bufferSize: 128 * 1024 * 1024,
       vo: 'gpu-next',
       pitch: true,
-      ready: () async {
-        // Auto-scale 8K/4K down to device capabilities & prevent frame lag
-        await player.platform?.setProperty('framedrop', 'vo');
-        await player.platform?.setProperty('video-sync', 'audio');
-        await player.platform?.setProperty('vd-lavc-fast', 'yes');
-        await player.platform?.setProperty('vd-lavc-skiploopfilter', 'nonkey');
-      },
     ),
   );
 
@@ -946,6 +939,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
   void initState() {
     super.initState();
     currentIndex = widget.initialIndex;
+    try {
+      (player.platform as dynamic)?.setProperty('framedrop', 'vo');
+      (player.platform as dynamic)?.setProperty('video-sync', 'audio');
+      (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
+      (player.platform as dynamic)?.setProperty('scale', 'bilinear');
+      (player.platform as dynamic)?.setProperty('dscale', 'bilinear');
+    } catch (_) {}
 
     player.stream.playing.listen((p) {
       if (mounted) setState(() => isPlaying = p);
@@ -1550,6 +1550,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
