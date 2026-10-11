@@ -175,6 +175,35 @@ class _MainTabScreenState extends State<MainTabScreen> {
         if (vids.isNotEmpty) historyList = vids.take(6).toList();
       });
       _applySorting();
+      _generateRealThumbnails(vids);
+    }
+  }
+
+  // Fast Video Thumbnail Extractor
+  Future<void> _generateRealThumbnails(List<MediaFile> vids) async {
+    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
+    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
+
+    for (var v in vids) {
+      final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
+      final thumbFile = File(thumbPath);
+
+      if (await thumbFile.exists()) {
+        if (mounted) setState(() => v.thumbPath = thumbPath);
+      } else {
+        try {
+          final tempPlayer = Player();
+          await tempPlayer.open(Media(v.file.path), play: false);
+          await Future.delayed(const Duration(milliseconds: 250));
+          final Uint8List? screenshot = await tempPlayer.screenshot(format: 'image/jpeg');
+          await tempPlayer.dispose();
+
+          if (screenshot != null && screenshot.isNotEmpty) {
+            await thumbFile.writeAsBytes(screenshot);
+            if (mounted) setState(() => v.thumbPath = thumbPath);
+          }
+        } catch (_) {}
+      }
     }
   }
 
@@ -303,14 +332,23 @@ class _MainTabScreenState extends State<MainTabScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             child: Row(
               children: [
+                // Real Video Thumbnail Card
                 Container(
                   width: 120,
                   height: 70,
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E1F2B),
                     borderRadius: BorderRadius.circular(8),
+                    image: item.thumbPath != null
+                        ? DecorationImage(
+                            image: FileImage(File(item.thumbPath!)),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
                   ),
-                  child: Center(child: Icon(Icons.play_circle_fill_rounded, color: const Color(0xFF00E676).withOpacity(0.6), size: 36)),
+                  child: item.thumbPath == null
+                      ? Center(child: Icon(Icons.movie_creation_outlined, color: const Color(0xFF00E676).withOpacity(0.5), size: 28))
+                      : null,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -393,10 +431,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   bool isLandscape = false;
   double playbackSpeed = 1.0;
 
-  // Track Lists (Subtitles & Audio Tracks)
   Tracks currentTracks = const Tracks();
 
-  // Swipe Gestures
   double brightness = 0.5;
   double volume = 1.0;
   bool showGestureIndicator = false;
@@ -489,7 +525,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     });
   }
 
-  // Multi-Language Audio Track Selector Sheet (Hindi, English etc.)
   void _openAudioLanguageSheet() {
     showModalBottomSheet(
       context: context,
@@ -512,7 +547,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
             if (currentTracks.audio.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text("No extra audio languages found in this video.", style: TextStyle(color: Colors.white54)),
+                child: Text("No extra audio tracks found in this video.", style: TextStyle(color: Colors.white54)),
               )
             else
               ...currentTracks.audio.map((track) {
@@ -525,7 +560,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   onTap: () {
                     player.setAudioTrack(track);
                     Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Audio switched to: $langName")));
                   },
                 );
               }),
@@ -535,7 +569,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     );
   }
 
-  // Subtitle ON/OFF & Online Search Sheet
   void _openSubtitleSheet() {
     showModalBottomSheet(
       context: context,
@@ -547,28 +580,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: const [
-                    Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
-                    SizedBox(width: 10),
-                    Text("Subtitles", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                  ],
-                ),
-                TextButton.icon(
-                  icon: const Icon(Icons.cloud_download_rounded, color: Color(0xFF00E676), size: 20),
-                  label: const Text("Search Online", style: TextStyle(color: Color(0xFF00E676))),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openOnlineSubtitleSearchDialog();
-                  },
-                ),
-              ],
-            ),
+            const Text("Subtitles", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
             const Divider(color: Colors.white12),
-            // Subtitle Turn OFF option
             ListTile(
               leading: const Icon(Icons.subtitles_off_rounded, color: Colors.redAccent),
               title: const Text("Turn OFF Subtitles", style: TextStyle(color: Colors.white)),
@@ -576,10 +589,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
               onTap: () {
                 player.setSubtitleTrack(SubtitleTrack.no());
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitles Turned OFF")));
               },
             ),
-            // Subtitle tracks present in video
             ...currentTracks.subtitle.map((track) {
               if (track == SubtitleTrack.no()) return const SizedBox.shrink();
               final isSelected = player.state.track.subtitle == track;
@@ -591,63 +602,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                 onTap: () {
                   player.setSubtitleTrack(track);
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Subtitle: $subTitle Enabled")));
                 },
               );
             }),
           ],
         ),
-      ),
-    );
-  }
-
-  // Online Subtitle Download & Load Dialog
-  void _openOnlineSubtitleSearchDialog() {
-    final searchCtrl = TextEditingController(text: widget.playlist[currentIndex].title.replaceAll(RegExp(r'\.(mp4|mkv|avi|mov)$', caseSensitive: false), ''));
-    showDialog(
-      context: context,
-      builder: (dlgCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF171822),
-        title: const Text("Download Subtitle Online", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: searchCtrl,
-              decoration: InputDecoration(
-                labelText: "Movie / Show Name",
-                filled: true,
-                fillColor: Colors.black38,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text("Online search connects to OpenSubtitles repository to fetch matching English and Hindi .srt files.", style: TextStyle(fontSize: 11, color: Colors.white54)),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dlgCtx), child: const Text("Cancel")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-            onPressed: () async {
-              Navigator.pop(dlgCtx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Searching subtitles online...")));
-              try {
-                final query = Uri.encodeComponent(searchCtrl.text.trim());
-                // Fast public subtitle fetch endpoint
-                final res = await http.get(Uri.parse("https://rest.opensubtitles.org/search/query-$query"), headers: {'User-Agent': 'TemporaryUserAgent'});
-                if (res.statusCode == 200) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitle downloaded and applied!")));
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No exact match found online. Use local .srt file.")));
-                }
-              } catch (_) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to reach subtitle server.")));
-              }
-            },
-            child: const Text("Search & Apply", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-          ),
-        ],
       ),
     );
   }
@@ -810,14 +769,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                       Expanded(
                         child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
-                      // Audio Language Switcher Icon
                       if (currentItem.isVideo)
                         IconButton(
                           icon: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
                           tooltip: 'Change Audio Language',
                           onPressed: _openAudioLanguageSheet,
                         ),
-                      // Subtitle Toggle & Download Icon
                       if (currentItem.isVideo)
                         IconButton(
                           icon: const Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
