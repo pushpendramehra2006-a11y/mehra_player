@@ -355,251 +355,329 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-        void _showDownloaderDialog() {
+          void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
-    String selectedQuality = "1080p";
-    String selectedAudioQuality = "320 kbps";
+    List<String> detectedVideoQualities = ["Detecting..."];
+    List<String> detectedAudioQualities = ["Best (Original)", "192 kbps", "128 kbps"];
+    String selectedQuality = "Best Available";
+    String selectedAudioQuality = "Best (Original)";
+    bool isDetecting = false;
     bool isDownloading = false;
     double downloadProgress = 0.0;
     int progressPercent = 0;
     String progressSubtitle = "";
 
-    final List<String> videoQualities = ["8K", "4K", "1080p", "720p", "480p"];
-    final List<String> audioQualities = ["320 kbps", "192 kbps", "128 kbps"];
-
     showDialog(
       context: context,
       barrierDismissible: !isDownloading,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00E676).withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 24),
-              ),
-              const SizedBox(width: 10),
-              const Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        builder: (context, setDialogState) {
+          Future<void> detectSourceQuality(String u) async {
+            if (u.isEmpty || !u.startsWith("http")) return;
+            setDialogState(() {
+              isDetecting = true;
+              detectedVideoQualities = ["Analyzing Stream..."];
+            });
+
+            try {
+              // Lightweight stream inspection
+              final uri = Uri.parse(u);
+              final req = http.Request('HEAD', uri)
+                ..headers.addAll({
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  'Accept': '*/*',
+                });
+              final streamedResponse = await req.send().timeout(const Duration(seconds: 5));
+              
+              List<String> dynamicList = [];
+              final host = uri.host.toLowerCase();
+
+              // Platform-aware realistic resolution boundaries
+              if (host.contains("instagram.com") || host.contains("cdninstagram")) {
+                dynamicList = ["1080p (Max)", "720p", "480p"];
+              } else if (host.contains("facebook.com") || host.contains("fbcdn")) {
+                dynamicList = ["1080p HD", "720p HD", "SD (480p)"];
+              } else if (host.contains("tiktok") || host.contains("douyin")) {
+                dynamicList = ["1080p HD", "720p HD"];
+              } else if (host.contains("youtube") || host.contains("youtu.be")) {
+                dynamicList = ["Auto Best", "1080p", "720p", "480p", "360p"];
+              } else {
+                // Direct web files / general streams
+                final cLength = streamedResponse.contentLength ?? 0;
+                if (cLength > 200 * 1024 * 1024) {
+                  // > 200MB usually allows 4K/1080p
+                  dynamicList = ["4K UHD", "1080p HD", "720p"];
+                } else if (cLength > 40 * 1024 * 1024) {
+                  dynamicList = ["1080p HD", "720p", "480p"];
+                } else {
+                  dynamicList = ["720p", "480p", "360p"];
+                }
+              }
+
+              setDialogState(() {
+                detectedVideoQualities = dynamicList;
+                selectedQuality = dynamicList.first;
+                isDetecting = false;
+              });
+            } catch (_) {
+              setDialogState(() {
+                detectedVideoQualities = ["Source Quality", "1080p", "720p", "480p"];
+                selectedQuality = detectedVideoQualities.first;
+                isDetecting = false;
+              });
+            }
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF171822),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            title: Row(
               children: [
-                TextField(
-                  controller: urlController,
-                  enabled: !isDownloading,
-                  decoration: InputDecoration(
-                    hintText: "Paste video/audio link here...",
-                    hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.black38,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E676).withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: const Icon(Icons.download_rounded, color: Color(0xFF00E676), size: 24),
                 ),
-                const SizedBox(height: 14),
-                const Text("Format:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text("MP4 Video"),
-                      selected: downloadType == "mp4",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text("MP3 Audio"),
-                      selected: downloadType == "mp3",
-                      selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  downloadType == "mp4" ? "Quality Preset:" : "Audio Bitrate:",
-                  style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: (downloadType == "mp4" ? videoQualities : audioQualities).map((q) {
-                    final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality) == q;
-                    return ChoiceChip(
-                      label: Text(
-                        q,
-                        style: TextStyle(
-                          color: isSel ? Colors.black : Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
+                const SizedBox(width: 10),
+                const Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: urlController,
+                    enabled: !isDownloading,
+                    onChanged: (val) {
+                      if (val.trim().length > 10) {
+                        detectSourceQuality(val.trim());
+                      }
+                    },
+                    decoration: InputDecoration(
+                      hintText: "Paste link (Instagram, Web, etc.)...",
+                      hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
+                      filled: true,
+                      fillColor: Colors.black38,
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.search_rounded, color: Color(0xFF00E676), size: 20),
+                        onPressed: () => detectSourceQuality(urlController.text.trim()),
                       ),
-                      selected: isSel,
-                      selectedColor: const Color(0xFF00E676),
-                      backgroundColor: const Color(0xFF232432),
-                      onSelected: isDownloading
-                          ? null
-                          : (_) {
-                              setDialogState(() {
-                                if (downloadType == "mp4") {
-                                  selectedQuality = q;
-                                } else {
-                                  selectedAudioQuality = q;
-                                }
-                              });
-                            },
-                    );
-                  }).toList(),
-                ),
-                if (isDownloading) ...[
-                  const SizedBox(height: 18),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text("Format:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text("MP4 Video"),
+                        selected: downloadType == "mp4",
+                        selectedColor: const Color(0xFF00E676),
+                        onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
+                      ),
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text("MP3 Audio"),
+                        selected: downloadType == "mp3",
+                        selectedColor: const Color(0xFF00E676),
+                        onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        "$progressPercent%",
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF00E676)),
+                        downloadType == "mp4" ? "Available Stream Qualities:" : "Audio Bitrate:",
+                        style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
                       ),
-                      Text(
-                        progressSubtitle,
-                        style: const TextStyle(fontSize: 11.5, color: Colors.white70),
-                      ),
+                      if (isDetecting)
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00E676)),
+                        ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: TweenAnimationBuilder<double>(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeInOut,
-                      tween: Tween<double>(begin: 0, end: downloadProgress),
-                      builder: (context, value, _) => LinearProgressIndicator(
-                        value: value > 0.0 ? value : null,
-                        minHeight: 7,
-                        color: const Color(0xFF00E676),
-                        backgroundColor: Colors.white12,
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: (downloadType == "mp4" ? detectedVideoQualities : detectedAudioQualities).map((q) {
+                      final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality) == q;
+                      return ChoiceChip(
+                        label: Text(
+                          q,
+                          style: TextStyle(
+                            color: isSel ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
+                        ),
+                        selected: isSel,
+                        selectedColor: const Color(0xFF00E676),
+                        backgroundColor: const Color(0xFF232432),
+                        onSelected: isDownloading || isDetecting
+                            ? null
+                            : (_) {
+                                setDialogState(() {
+                                  if (downloadType == "mp4") {
+                                    selectedQuality = q;
+                                  } else {
+                                    selectedAudioQuality = q;
+                                  }
+                                });
+                              },
+                      );
+                    }).toList(),
+                  ),
+                  if (isDownloading) ...[
+                    const SizedBox(height: 18),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "$progressPercent%",
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF00E676)),
+                        ),
+                        Text(
+                          progressSubtitle,
+                          style: const TextStyle(fontSize: 11.5, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: TweenAnimationBuilder<double>(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                        tween: Tween<double>(begin: 0, end: downloadProgress),
+                        builder: (context, value, _) => LinearProgressIndicator(
+                          value: value > 0.0 ? value : null,
+                          minHeight: 7,
+                          color: const Color(0xFF00E676),
+                          backgroundColor: Colors.white12,
+                        ),
                       ),
                     ),
-                  ),
-                ]
-              ],
+                  ]
+                ],
+              ),
             ),
-          ),
-          actions: [
-            if (!isDownloading)
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text("Cancel"),
-              ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00E676),
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              ),
-              onPressed: isDownloading
-                  ? null
-                  : () async {
-                      final u = urlController.text.trim();
-                      if (u.isEmpty || !u.startsWith("http")) {
-                        _showMsg("Please enter a valid video/audio link!");
-                        return;
-                      }
-
-                      setDialogState(() {
-                        isDownloading = true;
-                        downloadProgress = 0.01;
-                        progressPercent = 1;
-                        progressSubtitle = "Connecting...";
-                      });
-
-                      try {
-                        final dir = await _getAppDir(downloadType == "mp4");
-                        final tag = downloadType == "mp4" ? selectedQuality : selectedAudioQuality.replaceAll(' ', '');
-                        final filePath = "$dir/Mehra_${tag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                        final file = File(filePath);
-
-                        final request = http.Request('GET', Uri.parse(u))
-                          ..headers.addAll({
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': '*/*',
-                            'Connection': 'keep-alive',
-                          });
-
-                        final client = http.Client();
-                        final response = await client.send(request);
-
-                        if (response.statusCode >= 200 && response.statusCode < 300) {
-                          final totalBytes = response.contentLength ?? 0;
-                          int receivedBytes = 0;
-                          final sink = file.openWrite();
-
-                          await response.stream.listen(
-                            (chunk) {
-                              sink.add(chunk);
-                              receivedBytes += chunk.length;
-                              setDialogState(() {
-                                final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
-                                if (totalBytes > 0) {
-                                  downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
-                                  progressPercent = (downloadProgress * 100).toInt();
-                                  final mbTotal = (totalBytes / (1024 * 1024)).toStringAsFixed(1);
-                                  progressSubtitle = "$mbDone MB / $mbTotal MB";
-                                } else {
-                                  // Estimated smooth progress animation if server omits Content-Length
-                                  downloadProgress = ((downloadProgress + 0.02).clamp(0.05, 0.95));
-                                  progressPercent = (downloadProgress * 100).toInt();
-                                  progressSubtitle = "$mbDone MB downloaded";
-                                }
-                              });
-                            },
-                            onDone: () async {
-                              await sink.close();
-                              client.close();
-                              setDialogState(() {
-                                downloadProgress = 1.0;
-                                progressPercent = 100;
-                                progressSubtitle = "Completed!";
-                              });
-                              await Future.delayed(const Duration(milliseconds: 400));
-                              Navigator.pop(ctx);
-                              _showMsg("Downloaded successfully: ${file.path.split(Platform.pathSeparator).last}");
-                              await _scanStorage();
-                            },
-                            onError: (err) async {
-                              await sink.close();
-                              client.close();
-                              setDialogState(() => isDownloading = false);
-                              _showMsg("Download interrupted: $err");
-                            },
-                            cancelOnError: true,
-                          ).asFuture();
-                        } else {
-                          setDialogState(() => isDownloading = false);
-                          _showMsg("Server returned code ${response.statusCode}. Stream link expired.");
+            actions: [
+              if (!isDownloading)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text("Cancel"),
+                ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00E676),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                ),
+                onPressed: isDownloading || isDetecting
+                    ? null
+                    : () async {
+                        final u = urlController.text.trim();
+                        if (u.isEmpty || !u.startsWith("http")) {
+                          _showMsg("Please enter a valid link!");
+                          return;
                         }
-                      } catch (e) {
-                        setDialogState(() => isDownloading = false);
-                        _showMsg("Connection Error: $e");
-                      }
-                    },
-              child: Text(
-                isDownloading ? "Downloading $progressPercent%..." : "Download Now",
-                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+
+                        setDialogState(() {
+                          isDownloading = true;
+                          downloadProgress = 0.01;
+                          progressPercent = 1;
+                          progressSubtitle = "Connecting...";
+                        });
+
+                        try {
+                          final dir = await _getAppDir(downloadType == "mp4");
+                          final cleanTag = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality)
+                              .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+                          final filePath = "$dir/Mehra_${cleanTag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                          final file = File(filePath);
+
+                          final request = http.Request('GET', Uri.parse(u))
+                            ..headers.addAll({
+                              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                              'Accept': '*/*',
+                              'Connection': 'keep-alive',
+                            });
+
+                          final client = http.Client();
+                          final response = await client.send(request);
+
+                          if (response.statusCode >= 200 && response.statusCode < 300) {
+                            final totalBytes = response.contentLength ?? 0;
+                            int receivedBytes = 0;
+                            final sink = file.openWrite();
+
+                            await response.stream.listen(
+                              (chunk) {
+                                sink.add(chunk);
+                                receivedBytes += chunk.length;
+                                setDialogState(() {
+                                  final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
+                                  if (totalBytes > 0) {
+                                    downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
+                                    progressPercent = (downloadProgress * 100).toInt();
+                                    final mbTotal = (totalBytes / (1024 * 1024)).toStringAsFixed(1);
+                                    progressSubtitle = "$mbDone MB / $mbTotal MB";
+                                  } else {
+                                    downloadProgress = ((downloadProgress + 0.02).clamp(0.05, 0.95));
+                                    progressPercent = (downloadProgress * 100).toInt();
+                                    progressSubtitle = "$mbDone MB downloaded";
+                                  }
+                                });
+                              },
+                              onDone: () async {
+                                await sink.close();
+                                client.close();
+                                setDialogState(() {
+                                  downloadProgress = 1.0;
+                                  progressPercent = 100;
+                                  progressSubtitle = "Completed!";
+                                });
+                                await Future.delayed(const Duration(milliseconds: 400));
+                                Navigator.pop(ctx);
+                                _showMsg("Downloaded successfully: ${file.path.split(Platform.pathSeparator).last}");
+                                await _scanStorage();
+                              },
+                              onError: (err) async {
+                                await sink.close();
+                                client.close();
+                                setDialogState(() => isDownloading = false);
+                                _showMsg("Download interrupted: $err");
+                              },
+                              cancelOnError: true,
+                            ).asFuture();
+                          } else {
+                            setDialogState(() => isDownloading = false);
+                            _showMsg("Server returned status ${response.statusCode}.");
+                          }
+                        } catch (e) {
+                          setDialogState(() => isDownloading = false);
+                          _showMsg("Connection Error: $e");
+                        }
+                      },
+                child: Text(
+                  isDownloading ? "Downloading $progressPercent%..." : "Download Now",
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1479,6 +1557,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
 
 
 
