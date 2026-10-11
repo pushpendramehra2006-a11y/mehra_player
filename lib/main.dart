@@ -49,6 +49,7 @@ class MediaFile {
   int sizeBytes;
   final bool isVideo;
   String folderName;
+  DateTime modifiedTime;
   String? thumbPath;
 
   MediaFile({
@@ -57,6 +58,7 @@ class MediaFile {
     required this.sizeBytes,
     required this.isVideo,
     required this.folderName,
+    required this.modifiedTime,
     this.thumbPath,
   });
 
@@ -79,6 +81,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
   List<MediaFile> audioList = [];
   List<MediaFile> historyList = [];
   bool isLoading = false;
+  String sortBy = "time"; // "name", "size", "time"
 
   @override
   void initState() {
@@ -112,17 +115,26 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
+  // Deep Scan to find all videos present across internal storage
   Future<void> _scanStorage() async {
     List<Directory> targetDirs = [];
     if (Platform.isAndroid) {
-      targetDirs = [
-        Directory('/storage/emulated/0/DCIM/Camera'),
-        Directory('/storage/emulated/0/DCIM'),
-        Directory('/storage/emulated/0/Movies'),
-        Directory('/storage/emulated/0/Download'),
-        Directory('/storage/emulated/0/Music'),
-        Directory('/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media'),
-      ];
+      final root = Directory('/storage/emulated/0');
+      if (root.existsSync()) {
+        try {
+          final topLevel = root.listSync();
+          for (var item in topLevel) {
+            if (item is Directory) {
+              final name = item.path.split('/').last;
+              // Skip private system and cache directories
+              if (!name.startsWith('.') && name != 'Android') {
+                targetDirs.add(item);
+              }
+            }
+          }
+        } catch (_) {}
+      }
+      targetDirs.add(Directory('/storage/emulated/0/Android/media'));
     } else {
       final home = Platform.environment['USERPROFILE'] ?? 'C:';
       targetDirs = [
@@ -146,12 +158,14 @@ class _MainTabScreenState extends State<MainTabScreen> {
               if (name.startsWith('.')) continue;
 
               final folder = e.parent.path.split(Platform.pathSeparator).last;
-              final size = e.lengthSync();
+              final stat = e.statSync();
+              final size = stat.size;
+              final modified = stat.modified;
 
-              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv')) {
-                vids.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: true, folderName: folder));
+              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv') || p.endsWith('.ts')) {
+                vids.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: true, folderName: folder, modifiedTime: modified));
               } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac')) {
-                auds.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: false, folderName: folder));
+                auds.add(MediaFile(file: e, title: name, sizeBytes: size, isVideo: false, folderName: folder, modifiedTime: modified));
               }
             }
           }
@@ -163,33 +177,99 @@ class _MainTabScreenState extends State<MainTabScreen> {
       setState(() {
         videoList = vids;
         audioList = auds;
-        if (vids.isNotEmpty) historyList = vids.take(5).toList();
+        if (vids.isNotEmpty) historyList = vids.take(6).toList();
       });
+      _applySorting();
       _generateThumbnails(vids);
     }
   }
 
+  void _applySorting() {
+    setState(() {
+      if (sortBy == "name") {
+        videoList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        audioList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      } else if (sortBy == "size") {
+        videoList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
+        audioList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
+      } else if (sortBy == "time") {
+        videoList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
+        audioList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
+      }
+    });
+  }
+
+  void _showSortDialog() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Sort By", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+            const SizedBox(height: 14),
+            ListTile(
+              leading: Icon(Icons.access_time_rounded, color: sortBy == "time" ? const Color(0xFF00E676) : Colors.white54),
+              title: const Text("Date / Time (Newest First)"),
+              trailing: sortBy == "time" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () {
+                setState(() => sortBy = "time");
+                _applySorting();
+                Navigator.pop(ctx);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.sort_by_alpha_rounded, color: sortBy == "name" ? const Color(0xFF00E676) : Colors.white54),
+              title: const Text("File Name (A - Z)"),
+              trailing: sortBy == "name" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () {
+                setState(() => sortBy = "name");
+                _applySorting();
+                Navigator.pop(ctx);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.data_usage_rounded, color: sortBy == "size" ? const Color(0xFF00E676) : Colors.white54),
+              title: const Text("File Size (Large to Small)"),
+              trailing: sortBy == "size" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () {
+                setState(() => sortBy = "size");
+                _applySorting();
+                Navigator.pop(ctx);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Reliable Native Thumbnail Generator via MPV/MediaKit Player Engine
   Future<void> _generateThumbnails(List<MediaFile> vids) async {
-    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_thumbs");
+    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
 
-    for (var v in vids.take(35)) {
-      final thumbFile = File("${cacheDir.path}/${v.file.path.hashCode}.jpg");
+    for (var v in vids.take(40)) {
+      final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
+      final thumbFile = File(thumbPath);
+
       if (await thumbFile.exists()) {
-        if (mounted) setState(() => v.thumbPath = thumbFile.path);
+        if (mounted) setState(() => v.thumbPath = thumbPath);
       } else {
         try {
-          final res = await Process.run('ffmpeg', [
-            '-ss', '00:00:01',
-            '-i', v.file.path,
-            '-vframes', '1',
-            '-q:v', '6',
-            '-s', '240x135',
-            thumbFile.path,
-            '-y'
-          ]);
-          if (res.exitCode == 0 && await thumbFile.exists()) {
-            if (mounted) setState(() => v.thumbPath = thumbFile.path);
+          final tempPlayer = Player();
+          await tempPlayer.open(Media(v.file.path), play: false);
+          await Future.delayed(const Duration(milliseconds: 300));
+          final Uint8List? screenshot = await tempPlayer.screenshot(format: 'image/jpeg');
+          await tempPlayer.dispose();
+
+          if (screenshot != null && screenshot.isNotEmpty) {
+            await thumbFile.writeAsBytes(screenshot);
+            if (mounted) setState(() => v.thumbPath = thumbPath);
           }
         } catch (_) {}
       }
@@ -201,14 +281,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text), backgroundColor: const Color(0xFF1E1F30)));
   }
 
-  // Universal Video & Music Downloader (YouTube, Instagram, Direct Link)
   void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
-    List<String> qualities = ["Auto Best", "1080p", "720p", "480p"];
-    List<String> audioFx = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
-    String selectedQuality = "Auto Best";
-    String selectedAudioEffect = "Standard MP3";
     bool isDownloading = false;
     double downloadProgress = 0.0;
     int progressPercent = 0;
@@ -245,10 +320,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                const Text("Format & Type:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
+                Row(
                   children: [
                     ChoiceChip(
                       label: const Text("MP4 Video"),
@@ -256,6 +328,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                       selectedColor: const Color(0xFF00E676),
                       onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
                     ),
+                    const SizedBox(width: 8),
                     ChoiceChip(
                       label: const Text("MP3 Audio"),
                       selected: downloadType == "mp3",
@@ -264,29 +337,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Text(downloadType == "mp4" ? "Quality:" : "Audio Effect:", style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: (downloadType == "mp4" ? qualities : audioFx).map((opt) {
-                    final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == opt;
-                    return ChoiceChip(
-                      label: Text(opt, style: TextStyle(color: isSel ? Colors.black : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                      selected: isSel,
-                      selectedColor: const Color(0xFF00E676),
-                      backgroundColor: const Color(0xFF22232E),
-                      onSelected: isDownloading
-                          ? null
-                          : (_) => setDialogState(() {
-                                if (downloadType == "mp4") selectedQuality = opt; else selectedAudioEffect = opt;
-                              }),
-                    );
-                  }).toList(),
-                ),
                 if (isDownloading) ...[
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -316,105 +368,41 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   ? null
                   : () async {
                       final u = urlController.text.trim();
-                      if (u.isEmpty || !u.startsWith("http")) {
-                        _showMsg("Please paste a valid URL!");
-                        return;
-                      }
-
+                      if (u.isEmpty || !u.startsWith("http")) return;
                       setDialogState(() {
                         isDownloading = true;
-                        downloadProgress = 0.01;
                         progressPercent = 1;
                         progressSubtitle = "Connecting...";
                       });
-
                       try {
-                        final isVid = downloadType == "mp4";
-                        final dir = await _getAppDir(isVid);
-                        final ext = downloadType;
-                        final fileName = "Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
-                        final finalPath = "$dir/$fileName";
-                        final tempFile = File("$dir/temp_${DateTime.now().millisecondsSinceEpoch}.$ext");
-
-                        final req = http.Request('GET', Uri.parse(u))
-                          ..headers.addAll({
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': '*/*',
+                        final dir = await _getAppDir(downloadType == "mp4");
+                        final path = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                        final req = http.Request('GET', Uri.parse(u));
+                        final res = await req.send();
+                        final total = res.contentLength ?? 0;
+                        int got = 0;
+                        final sink = File(path).openWrite();
+                        await res.stream.listen((chunk) {
+                          sink.add(chunk);
+                          got += chunk.length;
+                          setDialogState(() {
+                            if (total > 0) {
+                              downloadProgress = (got / total).clamp(0.0, 1.0);
+                              progressPercent = (downloadProgress * 100).toInt();
+                              progressSubtitle = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB";
+                            }
                           });
-
-                        final client = http.Client();
-                        final response = await client.send(req);
-
-                        if (response.statusCode >= 200 && response.statusCode < 300) {
-                          final totalBytes = response.contentLength ?? 0;
-                          int receivedBytes = 0;
-                          final sink = tempFile.openWrite();
-
-                          await response.stream.listen(
-                            (chunk) {
-                              sink.add(chunk);
-                              receivedBytes += chunk.length;
-                              setDialogState(() {
-                                final mbDone = (receivedBytes / (1024 * 1024)).toStringAsFixed(1);
-                                if (totalBytes > 0) {
-                                  downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
-                                  progressPercent = (downloadProgress * 100).toInt();
-                                  final mbTotal = (totalBytes / (1024 * 1024)).toStringAsFixed(1);
-                                  progressSubtitle = "$mbDone MB / $mbTotal MB";
-                                } else {
-                                  downloadProgress = (downloadProgress + 0.02).clamp(0.05, 0.95);
-                                  progressPercent = (downloadProgress * 100).toInt();
-                                  progressSubtitle = "$mbDone MB (Downloading...)";
-                                }
-                              });
-                            },
-                            onDone: () async {
-                              await sink.close();
-                              client.close();
-
-                              if (downloadType == "mp3" && selectedAudioEffect != "Standard MP3") {
-                                setDialogState(() => progressSubtitle = "Rendering $selectedAudioEffect...");
-                                List<String> fArgs = [];
-                                if (selectedAudioEffect == "8D Audio") {
-                                  fArgs = ['-af', 'apulsator=hz=0.125,aecho=0.8:0.88:40:0.4'];
-                                } else if (selectedAudioEffect == "16D Audio") {
-                                  fArgs = ['-af', 'apulsator=hz=0.25,aecho=0.8:0.9:30:0.5'];
-                                } else if (selectedAudioEffect == "Lofi Chill") {
-                                  fArgs = ['-af', 'atempo=0.88,lowpass=f=3200,volume=1.2'];
-                                }
-
-                                final p = await Process.run('ffmpeg', ['-i', tempFile.path, ...fArgs, finalPath, '-y']);
-                                if (p.exitCode == 0) {
-                                  try { tempFile.deleteSync(); } catch (_) {}
-                                } else {
-                                  try { tempFile.renameSync(finalPath); } catch (_) {}
-                                }
-                              } else {
-                                try { tempFile.renameSync(finalPath); } catch (_) {}
-                              }
-
-                              Navigator.pop(ctx);
-                              _showMsg("Downloaded: $fileName");
-                              await _scanStorage();
-                            },
-                            onError: (err) async {
-                              await sink.close();
-                              client.close();
-                              setDialogState(() => isDownloading = false);
-                              _showMsg("Download interrupted: $err");
-                            },
-                            cancelOnError: true,
-                          ).asFuture();
-                        } else {
-                          setDialogState(() => isDownloading = false);
-                          _showMsg("Server response: ${response.statusCode}");
-                        }
+                        }).asFuture();
+                        await sink.close();
+                        Navigator.pop(ctx);
+                        _showMsg("Downloaded successfully!");
+                        await _scanStorage();
                       } catch (e) {
                         setDialogState(() => isDownloading = false);
-                        _showMsg("Error: $e");
+                        _showMsg("Download Error: $e");
                       }
                     },
-              child: Text(isDownloading ? "Downloading $progressPercent%..." : "Download Now", style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text("Download Now", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -499,6 +487,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
         titleSpacing: 16,
         title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white)),
         actions: [
+          IconButton(icon: const Icon(Icons.sort_rounded, color: Colors.white70), tooltip: "Sort Files", onPressed: _showSortDialog),
           IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), tooltip: "Downloader", onPressed: _showDownloaderDialog),
           IconButton(
             icon: const Icon(Icons.folder_open_rounded, color: Colors.white70),
@@ -506,7 +495,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
               final res = await FilePicker.platform.pickFiles(type: FileType.media);
               if (res != null && res.files.single.path != null) {
                 final f = File(res.files.single.path!);
-                _launchPlayer([MediaFile(file: f, title: f.path.split(Platform.pathSeparator).last, sizeBytes: f.lengthSync(), isVideo: !f.path.endsWith('.mp3'), folderName: 'Browse')], 0);
+                _launchPlayer([MediaFile(file: f, title: f.path.split(Platform.pathSeparator).last, sizeBytes: f.lengthSync(), isVideo: !f.path.endsWith('.mp3'), folderName: 'Browse', modifiedTime: DateTime.now())], 0);
               }
             },
           ),
@@ -714,7 +703,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   double playbackSpeed = 1.0;
   BoxFit currentFit = BoxFit.contain;
 
-  // Gesture Controls
+  // Swipe Gestures
   double brightness = 0.5;
   double volume = 1.0;
   bool showGestureIndicator = false;
@@ -886,60 +875,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     );
   }
 
-  void _openProSettingsSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF14151B),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-        child: Wrap(
-          runSpacing: 16,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _proBtn(Icons.headphones_rounded, "Background", () {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playing in background mode!")));
-                }),
-                _proBtn(Icons.picture_in_picture_alt_rounded, "Pop-up PiP", () {
-                  Navigator.pop(ctx);
-                  setState(() => isFloatingPip = true);
-                }),
-                _proBtn(Icons.equalizer_rounded, "Equalizer", () {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Equalizer Enhanced!")));
-                }),
-                _proBtn(Icons.screen_rotation_rounded, "Rotate", () {
-                  Navigator.pop(ctx);
-                  _toggleOrientation();
-                }),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _proBtn(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.08)),
-            child: Icon(icon, color: const Color(0xFF00E676), size: 22),
-          ),
-          const SizedBox(height: 6),
-          Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
-        ],
-      ),
-    );
-  }
-
   Widget _sidePillButton({required IconData icon, Color color = Colors.white, required VoidCallback onTap}) {
     return GestureDetector(
       onTap: onTap,
@@ -958,7 +893,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     return "$m:$s";
   }
 
-  // Modern Flowing Vinyl Disc Music Player UI
   Widget _buildAudioMusicPlayerView(MediaFile item) {
     return Center(
       child: Column(
@@ -1290,16 +1224,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                         tooltip: 'Rotate Screen',
                         onPressed: _toggleOrientation,
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                        onPressed: _openProSettingsSheet,
-                      ),
                     ],
                   ),
                 ),
               ),
 
-            // Bottom Bar (VLC/PLAYit Style Controls)
+            // Bottom Bar
             if (controlsVisible && !isLocked)
               Positioned(
                 bottom: 0, left: 0, right: 0,
