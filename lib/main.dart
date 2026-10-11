@@ -355,62 +355,147 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  void _showDownloaderDialog() {
+    void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
+    String selectedQuality = "1080p"; // Default video quality
+    String selectedAudioQuality = "320 kbps"; // Default audio bitrate
     bool isDownloading = false;
+
+    final List<String> videoQualities = ["8K", "4K", "1080p", "720p", "480p"];
+    final List<String> audioQualities = ["320 kbps", "192 kbps", "128 kbps"];
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: const Color(0xFF171822),
-          title: const Text("Download Video / Audio", style: TextStyle(fontWeight: FontWeight.bold)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: urlController,
-                decoration: const InputDecoration(hintText: "Paste direct media URL here...", border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  ChoiceChip(label: const Text("MP4"), selected: downloadType == "mp4", onSelected: (_) => setDialogState(() => downloadType = "mp4")),
-                  const SizedBox(width: 8),
-                  ChoiceChip(label: const Text("MP3"), selected: downloadType == "mp3", onSelected: (_) => setDialogState(() => downloadType = "mp3")),
-                ],
-              ),
-              if (isDownloading) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator(color: Color(0xFF00E676))),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.download_for_offline_rounded, color: Color(0xFF00E676)),
+              SizedBox(width: 8),
+              Text("Download Video / Audio", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
             ],
           ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: urlController,
+                  decoration: InputDecoration(
+                    hintText: "Paste media URL here...",
+                    hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
+                    filled: true,
+                    fillColor: Colors.black26,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text("Format:", style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text("MP4 Video"),
+                      selected: downloadType == "mp4",
+                      selectedColor: const Color(0xFF00E676),
+                      onSelected: (_) => setDialogState(() => downloadType = "mp4"),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: const Text("MP3 Audio"),
+                      selected: downloadType == "mp3",
+                      selectedColor: const Color(0xFF00E676),
+                      onSelected: (_) => setDialogState(() => downloadType = "mp3"),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  downloadType == "mp4" ? "Select Video Quality:" : "Select Audio Bitrate:",
+                  style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: (downloadType == "mp4" ? videoQualities : audioQualities).map((q) {
+                    final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioQuality) == q;
+                    return ChoiceChip(
+                      label: Text(
+                        q,
+                        style: TextStyle(
+                          color: isSel ? Colors.black : Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                      selected: isSel,
+                      selectedColor: const Color(0xFF00E676),
+                      backgroundColor: const Color(0xFF232432),
+                      onSelected: (_) {
+                        setDialogState(() {
+                          if (downloadType == "mp4") {
+                            selectedQuality = q;
+                          } else {
+                            selectedAudioQuality = q;
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+                if (isDownloading) ...[
+                  const SizedBox(height: 16),
+                  const LinearProgressIndicator(color: Color(0xFF00E676)),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Downloading in $selectedQuality...",
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
+                ]
+              ],
+            ),
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Cancel"),
+            ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-              onPressed: isDownloading ? null : () async {
-                final u = urlController.text.trim();
-                if (u.isEmpty) return;
-                setDialogState(() => isDownloading = true);
-                try {
-                  final dir = await _getAppDir(downloadType == "mp4");
-                  final path = "$dir/Download_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
-                  final resp = await http.get(Uri.parse(u));
-                  if (resp.statusCode == 200) {
-                    await File(path).writeAsBytes(resp.bodyBytes);
-                    Navigator.pop(ctx);
-                    _showMsg("Downloaded successfully!");
-                    await _scanStorage();
-                  } else {
-                    setDialogState(() => isDownloading = false);
-                    _showMsg("Failed to download file.");
-                  }
-                } catch (e) {
-                  setDialogState(() => isDownloading = false);
-                  _showMsg("Download Error: $e");
-                }
-              },
-              child: const Text("Download", style: TextStyle(color: Colors.black)),
+              onPressed: isDownloading
+                  ? null
+                  : () async {
+                      final u = urlController.text.trim();
+                      if (u.isEmpty || !u.startsWith("http")) {
+                        _showMsg("Please enter a valid URL!");
+                        return;
+                      }
+                      setDialogState(() => isDownloading = true);
+                      try {
+                        final dir = await _getAppDir(downloadType == "mp4");
+                        final tag = downloadType == "mp4" ? selectedQuality : selectedAudioQuality.replaceAll(' ', '');
+                        final path = "$dir/Download_${tag}_${DateTime.now().millisecondsSinceEpoch}.$downloadType";
+                        final resp = await http.get(Uri.parse(u));
+                        if (resp.statusCode == 200) {
+                          await File(path).writeAsBytes(resp.bodyBytes);
+                          Navigator.pop(ctx);
+                          _showMsg("Downloaded in $tag successfully!");
+                          await _scanStorage();
+                        } else {
+                          setDialogState(() => isDownloading = false);
+                          _showMsg("Download failed. Link expired or protected.");
+                        }
+                      } catch (e) {
+                        setDialogState(() => isDownloading = false);
+                        _showMsg("Download Error: $e");
+                      }
+                    },
+              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -1293,3 +1378,4 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     );
   }
 }
+
