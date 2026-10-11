@@ -162,18 +162,18 @@ class _MainTabScreenState extends State<MainTabScreen> {
     final cacheDir = Directory("${Directory.systemTemp.path}/mehra_thumbs");
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
 
-    for (var v in vids.take(20)) {
+    for (var v in vids.take(25)) {
       final thumbFile = File("${cacheDir.path}/${v.file.path.hashCode}.jpg");
       if (await thumbFile.exists()) {
         v.thumbPath = thumbFile.path;
       } else {
         try {
           final proc = await Process.run('ffmpeg', [
-            '-ss', '00:00:02',
+            '-ss', '00:00:01',
             '-i', v.file.path,
             '-vframes', '1',
-            '-q:v', '5',
-            '-s', '160x90',
+            '-q:v', '4',
+            '-s', '240x135',
             thumbFile.path,
             '-y'
           ]);
@@ -193,10 +193,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
   void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
-    List<String> detectedVideoQualities = ["Auto Best", "1080p", "720p", "480p"];
-    List<String> detectedAudioQualities = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
-    String selectedQuality = "Auto Best";
-    String selectedAudioEffect = "Standard MP3";
     bool isDownloading = false;
     double downloadProgress = 0.0;
     int progressPercent = 0;
@@ -225,7 +221,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   controller: urlController,
                   enabled: !isDownloading,
                   decoration: InputDecoration(
-                    hintText: "Paste video/audio/zip link...",
+                    hintText: "Paste video/audio link...",
                     hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
                     filled: true,
                     fillColor: Colors.black38,
@@ -508,7 +504,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     player,
     configuration: const VideoControllerConfiguration(
       enableHardwareAcceleration: true,
-      hwdec: 'mediacodec-copy',
+      hwdec: 'mediacodec', // Direct Surface VLC-grade hardware decode
     ),
   );
 
@@ -521,25 +517,32 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   bool controlsVisible = true;
   bool isLocked = false;
   bool isMuted = false;
-  bool isHdrEnabled = false;
   double playbackSpeed = 1.0;
-  BoxFit currentFit = BoxFit.contain;
 
-  List<AudioTrack> audioTracks = [];
-  List<SubtitleTrack> subtitleTracks = [];
+  // Zoom and Aspect Ratio States (FIT, FILL, ZOOM 100%, 125%, 150%, 200%)
+  int aspectModeIndex = 0;
+  final List<String> aspectModes = ["FIT", "FILL", "ZOOM 100%", "ZOOM 125%", "ZOOM 150%", "ZOOM 200%"];
+  double currentScale = 1.0;
+  BoxFit currentBoxFit = BoxFit.contain;
+  String currentToastText = "";
+  bool showToast = false;
 
   @override
   void initState() {
     super.initState();
     currentIndex = widget.initialIndex;
 
-    _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 12));
+    _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 10));
 
+    // VLC-Style Zero-Lag 4K/8K Engine Parameters
     try {
       (player.platform as dynamic)?.setProperty('framedrop', 'vo');
       (player.platform as dynamic)?.setProperty('video-sync', 'audio');
+      (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400'); // 150MB Buffer
+      (player.platform as dynamic)?.setProperty('demuxer-readahead-secs', '20');
       (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
-      (player.platform as dynamic)?.setProperty('vd-lavc-threads', '4');
+      (player.platform as dynamic)?.setProperty('vd-lavc-skiploopfilter', 'nonref');
+      (player.platform as dynamic)?.setProperty('vd-lavc-threads', '0'); // Auto all CPU cores
       (player.platform as dynamic)?.setProperty('scale', 'bilinear');
       (player.platform as dynamic)?.setProperty('dscale', 'bilinear');
     } catch (_) {}
@@ -563,15 +566,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
       if (mounted) setState(() => duration = d);
     });
 
-    player.stream.tracks.listen((tracks) {
-      if (mounted) {
-        setState(() {
-          audioTracks = tracks.audio;
-          subtitleTracks = tracks.subtitle;
-        });
-      }
-    });
-
     _openMedia(currentIndex);
   }
 
@@ -589,82 +583,51 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     await player.play();
   }
 
+  void _cycleAspectRatioAndZoom() {
+    setState(() {
+      aspectModeIndex = (aspectModeIndex + 1) % aspectModes.length;
+      final mode = aspectModes[aspectModeIndex];
+      currentToastText = mode;
+      showToast = true;
+
+      switch (mode) {
+        case "FIT":
+          currentBoxFit = BoxFit.contain;
+          currentScale = 1.0;
+          break;
+        case "FILL":
+          currentBoxFit = BoxFit.cover;
+          currentScale = 1.0;
+          break;
+        case "ZOOM 100%":
+          currentBoxFit = BoxFit.contain;
+          currentScale = 1.0;
+          break;
+        case "ZOOM 125%":
+          currentBoxFit = BoxFit.cover;
+          currentScale = 1.25;
+          break;
+        case "ZOOM 150%":
+          currentBoxFit = BoxFit.cover;
+          currentScale = 1.5;
+          break;
+        case "ZOOM 200%":
+          currentBoxFit = BoxFit.cover;
+          currentScale = 2.0;
+          break;
+      }
+    });
+
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => showToast = false);
+    });
+  }
+
   String _formatDuration(Duration d) {
     String two(int n) => n.toString().padLeft(2, '0');
     final m = two(d.inMinutes.remainder(60));
     final s = two(d.inSeconds.remainder(60));
     return "$m:$s";
-  }
-
-  void _showOnlineSubtitleDialog() {
-    final subCtrl = TextEditingController(text: widget.playlist[currentIndex].title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), ''));
-    bool isSearching = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setSubState) => AlertDialog(
-          backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: const [
-              Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
-              SizedBox(width: 8),
-              Text("Online Subtitles", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: subCtrl,
-                decoration: InputDecoration(
-                  hintText: "Enter movie / video name...",
-                  filled: true,
-                  fillColor: Colors.black38,
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.search, color: Color(0xFF00E676)),
-                    onPressed: () {
-                      setSubState(() => isSearching = true);
-                      Future.delayed(const Duration(seconds: 2), () {
-                        setSubState(() => isSearching = false);
-                      });
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              if (isSearching)
-                const LinearProgressIndicator(color: Color(0xFF00E676))
-              else
-                Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.file_download_outlined, color: Colors.cyanAccent),
-                      title: const Text("English (Auto-Sync SRT)", style: TextStyle(fontSize: 13)),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("English Subtitle loaded!")));
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.file_download_outlined, color: Color(0xFF00E676)),
-                      title: const Text("Hindi (Auto-Sync SRT)", style: TextStyle(fontSize: 13)),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hindi Subtitle loaded!")));
-                      },
-                    ),
-                  ],
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildAudioMusicPlayerView(MediaFile item) {
@@ -681,35 +644,35 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
               );
             },
             child: Container(
-              width: 240,
-              height: 240,
+              width: 250,
+              height: 250,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: const RadialGradient(
-                  colors: [Colors.black, Color(0xFF1E1F29), Colors.black],
+                  colors: [Colors.black, Color(0xFF181A24), Colors.black],
                   stops: [0.3, 0.7, 1.0],
                 ),
                 boxShadow: [
-                  BoxShadow(color: const Color(0xFF00E676).withOpacity(0.35), blurRadius: 40, spreadRadius: 4),
+                  BoxShadow(color: const Color(0xFF00E676).withOpacity(0.35), blurRadius: 45, spreadRadius: 5),
                 ],
               ),
               child: Center(
                 child: Container(
-                  width: 90,
-                  height: 90,
+                  width: 95,
+                  height: 95,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(color: const Color(0xFF00E676), width: 3),
                     gradient: const LinearGradient(colors: [Color(0xFF00E676), Colors.tealAccent]),
                   ),
                   child: const Center(
-                    child: Icon(Icons.music_note_rounded, size: 45, color: Colors.black),
+                    child: Icon(Icons.music_note_rounded, size: 48, color: Colors.black),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 36),
+          const SizedBox(height: 38),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
@@ -740,9 +703,34 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
           fit: StackFit.expand,
           children: [
             if (currentItem.isVideo)
-              Video(controller: controller, controls: NoVideoControls, fit: currentFit)
+              ClipRect(
+                child: Transform.scale(
+                  scale: currentScale,
+                  alignment: Alignment.center,
+                  child: Video(controller: controller, controls: NoVideoControls, fit: currentBoxFit),
+                ),
+              )
             else
               _buildAudioMusicPlayerView(currentItem),
+
+            // Toast overlay on zoom / aspect change
+            if (showToast)
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.75),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF00E676), width: 1.2),
+                  ),
+                  child: Text(
+                    currentToastText,
+                    style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+              ),
+
+            // Top bar
             if (controlsVisible)
               Positioned(
                 top: 0, left: 0, right: 0,
@@ -760,15 +748,40 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                       Expanded(
                         child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
-                        tooltip: 'Online Subtitles',
-                        onPressed: _showOnlineSubtitleDialog,
-                      ),
                     ],
                   ),
                 ),
               ),
+
+            // Right side Crop / Aspect Ratio Quick Button
+            if (controlsVisible && !isLocked && currentItem.isVideo)
+              Positioned(
+                right: 14,
+                top: MediaQuery.of(context).size.height * 0.44,
+                child: GestureDetector(
+                  onTap: _cycleAspectRatioAndZoom,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF00E676).withOpacity(0.6)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.aspect_ratio_rounded, color: Color(0xFF00E676), size: 20),
+                        const SizedBox(height: 3),
+                        Text(
+                          aspectModes[aspectModeIndex].split(' ').first,
+                          style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // Bottom bar
             if (controlsVisible && !isLocked)
               Positioned(
                 bottom: 0, left: 0, right: 0,
@@ -821,6 +834,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                             onPressed: () {
                               if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
                             },
+                          ),
+                          // Corner Bottom Crop / Zoom Button (Fit, Fill, 100%, 125%, 150%, 200%)
+                          IconButton(
+                            icon: const Icon(Icons.fullscreen_rounded, color: Color(0xFF00E676), size: 26),
+                            tooltip: 'Aspect Ratio & Zoom',
+                            onPressed: _cycleAspectRatioAndZoom,
                           ),
                         ],
                       ),
