@@ -185,11 +185,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  void _showMsg(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text), backgroundColor: const Color(0xFF1E1F30)));
-  }
-
   void _showDownloaderDialog() {
     final urlController = TextEditingController();
     String downloadType = "mp4";
@@ -304,11 +299,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         }).asFuture();
                         await sink.close();
                         Navigator.pop(ctx);
-                        _showMsg("Downloaded successfully!");
                         await _scanStorage();
                       } catch (e) {
                         setDialogState(() => isDownloading = false);
-                        _showMsg("Download Error: $e");
                       }
                     },
               child: const Text("Download Now", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
@@ -504,11 +497,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     player,
     configuration: const VideoControllerConfiguration(
       enableHardwareAcceleration: true,
-      hwdec: 'mediacodec', // Direct Surface VLC-grade hardware decode
+      hwdec: 'mediacodec',
     ),
   );
 
   late AnimationController _discAnimCtrl;
+  late TransformationController _transformController;
   late int currentIndex;
   bool isPlaying = false;
   Duration position = Duration.zero;
@@ -519,13 +513,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   bool isMuted = false;
   double playbackSpeed = 1.0;
 
-  // Zoom and Aspect Ratio States (FIT, FILL, ZOOM 100%, 125%, 150%, 200%)
-  int aspectModeIndex = 0;
-  final List<String> aspectModes = ["FIT", "FILL", "ZOOM 100%", "ZOOM 125%", "ZOOM 150%", "ZOOM 200%"];
-  double currentScale = 1.0;
+  // Real-time Pinch Zoom tracking
+  double currentZoomPercent = 100.0;
+  bool showZoomToast = false;
   BoxFit currentBoxFit = BoxFit.contain;
-  String currentToastText = "";
-  bool showToast = false;
 
   @override
   void initState() {
@@ -533,16 +524,28 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     currentIndex = widget.initialIndex;
 
     _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 10));
+    _transformController = TransformationController();
 
-    // VLC-Style Zero-Lag 4K/8K Engine Parameters
+    // Listen to two-finger pinch zoom changes
+    _transformController.addListener(() {
+      final scale = _transformController.value.getMaxScaleOnAxis();
+      final pct = (scale * 100).roundToDouble();
+      if ((pct - currentZoomPercent).abs() >= 2) {
+        setState(() {
+          currentZoomPercent = pct;
+          showZoomToast = true;
+        });
+      }
+    });
+
     try {
       (player.platform as dynamic)?.setProperty('framedrop', 'vo');
       (player.platform as dynamic)?.setProperty('video-sync', 'audio');
-      (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400'); // 150MB Buffer
+      (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400');
       (player.platform as dynamic)?.setProperty('demuxer-readahead-secs', '20');
       (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
       (player.platform as dynamic)?.setProperty('vd-lavc-skiploopfilter', 'nonref');
-      (player.platform as dynamic)?.setProperty('vd-lavc-threads', '0'); // Auto all CPU cores
+      (player.platform as dynamic)?.setProperty('vd-lavc-threads', '0');
       (player.platform as dynamic)?.setProperty('scale', 'bilinear');
       (player.platform as dynamic)?.setProperty('dscale', 'bilinear');
     } catch (_) {}
@@ -572,6 +575,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   @override
   void dispose() {
     _discAnimCtrl.dispose();
+    _transformController.dispose();
     player.dispose();
     super.dispose();
   }
@@ -581,46 +585,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     setState(() => currentIndex = index);
     await player.open(Media(widget.playlist[index].file.path));
     await player.play();
-  }
-
-  void _cycleAspectRatioAndZoom() {
-    setState(() {
-      aspectModeIndex = (aspectModeIndex + 1) % aspectModes.length;
-      final mode = aspectModes[aspectModeIndex];
-      currentToastText = mode;
-      showToast = true;
-
-      switch (mode) {
-        case "FIT":
-          currentBoxFit = BoxFit.contain;
-          currentScale = 1.0;
-          break;
-        case "FILL":
-          currentBoxFit = BoxFit.cover;
-          currentScale = 1.0;
-          break;
-        case "ZOOM 100%":
-          currentBoxFit = BoxFit.contain;
-          currentScale = 1.0;
-          break;
-        case "ZOOM 125%":
-          currentBoxFit = BoxFit.cover;
-          currentScale = 1.25;
-          break;
-        case "ZOOM 150%":
-          currentBoxFit = BoxFit.cover;
-          currentScale = 1.5;
-          break;
-        case "ZOOM 200%":
-          currentBoxFit = BoxFit.cover;
-          currentScale = 2.0;
-          break;
-      }
-    });
-
-    Future.delayed(const Duration(milliseconds: 1400), () {
-      if (mounted) setState(() => showToast = false);
-    });
   }
 
   String _formatDuration(Duration d) {
@@ -703,34 +667,43 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
           fit: StackFit.expand,
           children: [
             if (currentItem.isVideo)
-              ClipRect(
-                child: Transform.scale(
-                  scale: currentScale,
-                  alignment: Alignment.center,
+              // Multi-touch Pinch to Zoom in & out like PLAYit (100% to 300%)
+              InteractiveViewer(
+                transformationController: _transformController,
+                minScale: 1.0,
+                maxScale: 3.5,
+                panEnabled: true,
+                scaleEnabled: !isLocked,
+                onInteractionEnd: (_) {
+                  Future.delayed(const Duration(milliseconds: 1200), () {
+                    if (mounted) setState(() => showZoomToast = false);
+                  });
+                },
+                child: SizedBox.expand(
                   child: Video(controller: controller, controls: NoVideoControls, fit: currentBoxFit),
                 ),
               )
             else
               _buildAudioMusicPlayerView(currentItem),
 
-            // Toast overlay on zoom / aspect change
-            if (showToast)
+            // Live Zoom percentage toast
+            if (showZoomToast && currentItem.isVideo)
               Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.75),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFF00E676), width: 1.2),
+                    color: Colors.black.withOpacity(0.8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF00E676), width: 1.5),
                   ),
                   child: Text(
-                    currentToastText,
+                    "Zoom: ${currentZoomPercent.toInt()}%",
                     style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                 ),
               ),
 
-            // Top bar
+            // Top Bar
             if (controlsVisible)
               Positioned(
                 top: 0, left: 0, right: 0,
@@ -753,13 +726,19 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                 ),
               ),
 
-            // Right side Crop / Aspect Ratio Quick Button
+            // Double tap to reset zoom button (Right side)
             if (controlsVisible && !isLocked && currentItem.isVideo)
               Positioned(
                 right: 14,
                 top: MediaQuery.of(context).size.height * 0.44,
                 child: GestureDetector(
-                  onTap: _cycleAspectRatioAndZoom,
+                  onTap: () {
+                    setState(() {
+                      _transformController.value = Matrix4.identity();
+                      currentZoomPercent = 100.0;
+                      currentBoxFit = currentBoxFit == BoxFit.contain ? BoxFit.cover : BoxFit.contain;
+                    });
+                  },
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -769,10 +748,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                     ),
                     child: Column(
                       children: [
-                        const Icon(Icons.aspect_ratio_rounded, color: Color(0xFF00E676), size: 20),
+                        const Icon(Icons.zoom_out_map_rounded, color: Color(0xFF00E676), size: 20),
                         const SizedBox(height: 3),
                         Text(
-                          aspectModes[aspectModeIndex].split(' ').first,
+                          "${currentZoomPercent.toInt()}%",
                           style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.white),
                         ),
                       ],
@@ -781,7 +760,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                 ),
               ),
 
-            // Bottom bar
+            // Bottom Bar
             if (controlsVisible && !isLocked)
               Positioned(
                 bottom: 0, left: 0, right: 0,
@@ -835,11 +814,15 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                               if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
                             },
                           ),
-                          // Corner Bottom Crop / Zoom Button (Fit, Fill, 100%, 125%, 150%, 200%)
                           IconButton(
-                            icon: const Icon(Icons.fullscreen_rounded, color: Color(0xFF00E676), size: 26),
-                            tooltip: 'Aspect Ratio & Zoom',
-                            onPressed: _cycleAspectRatioAndZoom,
+                            icon: const Icon(Icons.fit_screen_rounded, color: Color(0xFF00E676), size: 26),
+                            tooltip: 'Reset Zoom & Fit',
+                            onPressed: () {
+                              setState(() {
+                                _transformController.value = Matrix4.identity();
+                                currentZoomPercent = 100.0;
+                              });
+                            },
                           ),
                         ],
                       ),
