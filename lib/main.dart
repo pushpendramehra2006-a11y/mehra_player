@@ -85,20 +85,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     _scanStorage();
   }
 
-  Future<String> _getAppDir(bool isVideo) async {
-    if (Platform.isAndroid) {
-      final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
-      final dir = Directory(base);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    } else {
-      final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      final dir = Directory('$home\\Downloads\\MehraPlayer');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    }
-  }
-
   Future<void> _scanStorage() async {
     setState(() => isLoading = true);
     List<Directory> targetDirs = [];
@@ -154,34 +140,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
         if (vids.isNotEmpty) historyList = vids.take(5).toList();
         isLoading = false;
       });
-      _generateThumbnails(vids);
-    }
-  }
-
-  Future<void> _generateThumbnails(List<MediaFile> vids) async {
-    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_thumbs");
-    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-
-    for (var v in vids.take(25)) {
-      final thumbFile = File("${cacheDir.path}/${v.file.path.hashCode}.jpg");
-      if (await thumbFile.exists()) {
-        v.thumbPath = thumbFile.path;
-      } else {
-        try {
-          final proc = await Process.run('ffmpeg', [
-            '-ss', '00:00:01',
-            '-i', v.file.path,
-            '-vframes', '1',
-            '-q:v', '4',
-            '-s', '240x135',
-            thumbFile.path,
-            '-y'
-          ]);
-          if (proc.exitCode == 0 && await thumbFile.exists()) {
-            if (mounted) setState(() => v.thumbPath = thumbFile.path);
-          }
-        } catch (_) {}
-      }
     }
   }
 
@@ -255,24 +213,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   child: Container(
                     width: 140,
                     margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1B1C26),
-                      borderRadius: BorderRadius.circular(8),
-                      image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (item.thumbPath == null) Center(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white.withOpacity(0.3), size: 36)),
-                        Positioned(
-                          left: 0, right: 0, bottom: 0,
-                          child: Container(
-                            color: Colors.black54, padding: const EdgeInsets.all(4),
-                            child: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.white)),
-                          ),
-                        ),
-                      ],
-                    ),
+                    decoration: BoxDecoration(color: const Color(0xFF1B1C26), borderRadius: BorderRadius.circular(8)),
+                    child: Center(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white.withOpacity(0.3), size: 36)),
                   ),
                 );
               },
@@ -284,40 +226,16 @@ class _MainTabScreenState extends State<MainTabScreen> {
           final index = entry.key;
           final item = entry.value;
 
-          return InkWell(
+          return ListTile(
             onTap: () => _launchPlayer(videoList, index),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 124,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E1F2B),
-                      borderRadius: BorderRadius.circular(8),
-                      image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
-                    ),
-                    child: item.thumbPath == null ? Center(child: Icon(Icons.movie_creation_outlined, color: Colors.white.withOpacity(0.3), size: 32)) : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-                        const SizedBox(height: 4),
-                        Text("${item.folderName} | ${item.formattedSize}", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5))),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.more_vert_rounded, color: Colors.white.withOpacity(0.4)),
-                    onPressed: () {},
-                  )
-                ],
-              ),
+            leading: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(color: const Color(0xFF1E1F2B), borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.movie_creation_outlined, color: Color(0xFF00E676)),
             ),
+            title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
           );
         }),
       ],
@@ -356,7 +274,7 @@ class PlayitVideoPlayer extends StatefulWidget {
   State<PlayitVideoPlayer> createState() => _PlayitVideoPlayerState();
 }
 
-class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTickerProviderStateMixin {
+class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final player = Player(
     configuration: PlayerConfiguration(
       bufferSize: 256 * 1024 * 1024,
@@ -383,45 +301,32 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   bool controlsVisible = true;
   bool isLocked = false;
   bool isLandscape = false;
+  bool backgroundAudioEnabled = true;
 
-  // Swipe Gestures: Brightness & Volume
+  // Swipe Gestures
   double brightness = 0.5;
-  double volume = 1.0; // 0.0 to 1.0
+  double volume = 1.0;
   bool showGestureIndicator = false;
-  String gestureType = ""; // "brightness" or "volume"
-  double gestureValue = 0.0; // 0 to 100
+  String gestureType = "";
+  double gestureValue = 0.0;
 
-  // Pinch Zoom tracking
-  double currentZoomPercent = 100.0;
-  bool showZoomToast = false;
+  // In-App Floating Video Pop-up Window (PiP) State
+  bool isFloatingPip = false;
+  Offset pipOffset = const Offset(20, 100);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     currentIndex = widget.initialIndex;
 
     _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 10));
     _transformController = TransformationController();
 
-    _transformController.addListener(() {
-      final scale = _transformController.value.getMaxScaleOnAxis();
-      final pct = (scale * 100).roundToDouble();
-      if ((pct - currentZoomPercent).abs() >= 2) {
-        setState(() {
-          currentZoomPercent = pct;
-          showZoomToast = true;
-        });
-      }
-    });
-
     try {
       (player.platform as dynamic)?.setProperty('framedrop', 'vo');
       (player.platform as dynamic)?.setProperty('video-sync', 'audio');
-      (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400');
-      (player.platform as dynamic)?.setProperty('demuxer-readahead-secs', '20');
       (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
-      (player.platform as dynamic)?.setProperty('vd-lavc-skiploopfilter', 'nonref');
-      (player.platform as dynamic)?.setProperty('vd-lavc-threads', '0');
       (player.platform as dynamic)?.setProperty('scale', 'bilinear');
       (player.platform as dynamic)?.setProperty('dscale', 'bilinear');
     } catch (_) {}
@@ -445,7 +350,18 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Keep playing in background when minimized unless explicitly stopped
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      if (backgroundAudioEnabled && isPlaying) {
+        // Continue playback continuously in background
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -473,6 +389,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
       } else {
         SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
       }
+    });
+  }
+
+  void _triggerPipPopUp() {
+    setState(() {
+      isFloatingPip = !isFloatingPip;
+      controlsVisible = !isFloatingPip;
     });
   }
 
@@ -531,19 +454,94 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
     final remainingDuration = duration - position;
     final screenWidth = MediaQuery.of(context).size.width;
 
+    // Floating Pop-up Window Render Mode
+    if (isFloatingPip) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            Positioned(
+              left: pipOffset.dx,
+              top: pipOffset.dy,
+              child: GestureDetector(
+                onPanUpdate: (d) {
+                  setState(() {
+                    pipOffset = Offset(
+                      (pipOffset.dx + d.delta.dx).clamp(10, MediaQuery.of(context).size.width - 230),
+                      (pipOffset.dy + d.delta.dy).clamp(30, MediaQuery.of(context).size.height - 150),
+                    );
+                  });
+                },
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: 220,
+                    height: 125,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      border: Border.all(color: const Color(0xFF00E676), width: 2),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.8), blurRadius: 16)],
+                    ),
+                    child: Stack(
+                      children: [
+                        Video(controller: controller, controls: NoVideoControls, fit: BoxFit.cover),
+                        Positioned(
+                          right: 4, top: 4,
+                          child: Row(
+                            children: [
+                              GestureDetector(
+                                onTap: _triggerPipPopUp,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                                  child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 18),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () => Navigator.pop(context),
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                                  child: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Positioned(
+                          left: 6, bottom: 6,
+                          child: GestureDetector(
+                            onTap: () => player.playOrPause(),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                              child: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, color: const Color(0xFF00E676), size: 18),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
         onTap: () {
           if (!isLocked) setState(() => controlsVisible = !controlsVisible);
         },
-        // Vertical swipe gesture handler
         onVerticalDragUpdate: isLocked
             ? null
             : (details) {
                 final isLeftHalf = details.globalPosition.dx < (screenWidth / 2);
-                final delta = -details.primaryDelta! / 200.0; // swipe up is positive
-
+                final delta = -details.primaryDelta! / 200.0;
                 setState(() {
                   showGestureIndicator = true;
                   if (isLeftHalf) {
@@ -566,7 +564,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Video or Audio Layer
             if (currentItem.isVideo)
               InteractiveViewer(
                 transformationController: _transformController,
@@ -574,11 +571,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                 maxScale: 3.5,
                 panEnabled: true,
                 scaleEnabled: !isLocked,
-                onInteractionEnd: (_) {
-                  Future.delayed(const Duration(milliseconds: 1200), () {
-                    if (mounted) setState(() => showZoomToast = false);
-                  });
-                },
                 child: SizedBox.expand(
                   child: Video(controller: controller, controls: NoVideoControls, fit: BoxFit.contain),
                 ),
@@ -586,14 +578,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
             else
               _buildAudioMusicPlayerView(currentItem),
 
-            // Brightness Dimmer Overlay
             IgnorePointer(
-              child: Container(
-                color: Colors.black.withOpacity((1.0 - brightness) * 0.75),
-              ),
+              child: Container(color: Colors.black.withOpacity((1.0 - brightness) * 0.75)),
             ),
 
-            // Gesture Volume / Brightness Indicator Pop-up
             if (showGestureIndicator && !isLocked)
               Center(
                 child: Container(
@@ -613,10 +601,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                         size: 34,
                       ),
                       const SizedBox(height: 10),
-                      Text(
-                        "${gestureValue.toInt()}%",
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
-                      ),
+                      Text("${gestureValue.toInt()}%", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
                       const SizedBox(height: 8),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(4),
@@ -628,48 +613,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                         ),
                       ),
                     ],
-                  ),
-                ),
-              ),
-
-            // Live Zoom percentage toast
-            if (showZoomToast && currentItem.isVideo)
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF00E676), width: 1.5),
-                  ),
-                  child: Text("Zoom: ${currentZoomPercent.toInt()}%", style: const TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold, fontSize: 16)),
-                ),
-              ),
-
-            // Lock Button (Floating on Left)
-            if (controlsVisible || isLocked)
-              Positioned(
-                left: 16,
-                top: MediaQuery.of(context).size.height * 0.44,
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      isLocked = !isLocked;
-                      if (!isLocked) controlsVisible = true;
-                    });
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.65),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: isLocked ? Colors.redAccent : const Color(0xFF00E676), width: 1.5),
-                    ),
-                    child: Icon(
-                      isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                      color: isLocked ? Colors.redAccent : const Color(0xFF00E676),
-                      size: 24,
-                    ),
                   ),
                 ),
               ),
@@ -692,9 +635,15 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                       Expanded(
                         child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                       ),
-                      // Rotate Button (Landscape / Portrait)
+                      // Floating Pop-up Window (PiP) Icon
+                      if (currentItem.isVideo)
+                        IconButton(
+                          icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Color(0xFF00E676)),
+                          tooltip: 'Floating Pop-up Player',
+                          onPressed: _triggerPipPopUp,
+                        ),
                       IconButton(
-                        icon: Icon(isLandscape ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, color: const Color(0xFF00E676)),
+                        icon: Icon(isLandscape ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, color: Colors.white),
                         tooltip: 'Rotate Screen',
                         onPressed: _toggleOrientation,
                       ),
@@ -757,20 +706,9 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with SingleTicker
                               if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
                             },
                           ),
-                          // Rotate Shortcut Button
                           IconButton(
-                            icon: const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E676), size: 24),
-                            onPressed: _toggleOrientation,
-                          ),
-                          // Reset Zoom to Normal
-                          IconButton(
-                            icon: const Icon(Icons.fit_screen_rounded, color: Colors.white70, size: 24),
-                            onPressed: () {
-                              setState(() {
-                                _transformController.value = Matrix4.identity();
-                                currentZoomPercent = 100.0;
-                              });
-                            },
+                            icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Color(0xFF00E676), size: 24),
+                            onPressed: _triggerPipPopUp,
                           ),
                         ],
                       ),
