@@ -1,16 +1,13 @@
 ﻿import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  // Allow all orientations on mobile
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -49,14 +46,12 @@ class MediaItem {
   final String name;
   final int sizeInBytes;
   final bool isVideo;
-  Uint8List? thumbnail;
 
   MediaItem({
     required this.file,
     required this.name,
     required this.sizeInBytes,
     required this.isVideo,
-    this.thumbnail,
   });
 
   String get formattedSize {
@@ -164,20 +159,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         audios = aList;
         isLoading = false;
       });
-    }
-
-    for (var item in vList) {
-      try {
-        final thumb = await VideoThumbnail.thumbnailData(
-          video: item.file.path,
-          imageFormat: ImageFormat.JPEG,
-          maxWidth: 160,
-          quality: 50,
-        );
-        if (mounted && thumb != null) {
-          setState(() => item.thumbnail = thumb);
-        }
-      } catch (_) {}
     }
   }
 
@@ -348,29 +329,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    width: 105,
-                    height: 64,
-                    color: const Color(0xFF1E1F30),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (item.thumbnail != null)
-                          Image.memory(item.thumbnail!, fit: BoxFit.cover)
-                        else
-                          const Center(child: Icon(Icons.movie_rounded, color: Colors.white24, size: 28)),
-                        Positioned(
-                          right: 4,
-                          bottom: 4,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.8),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text("HD", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white)),
-                          ),
-                        )
-                      ],
+                    width: 90,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2E1065), Color(0xFF1E1F30)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.play_circle_fill_rounded, color: Color(0xFF8B5CF6), size: 30),
                     ),
                   ),
                 ),
@@ -440,7 +409,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 color: const Color(0xFF8B5CF6).withOpacity(0.18),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.music_note_rounded, color: Color(0xFF8B5CF6)),
+              child: const Icon(Icons.audiotrack_rounded, color: Color(0xFF8B5CF6)),
             ),
             title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500)),
             subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
@@ -452,7 +421,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 }
 
-// ---------------- RESPONSIVE PLAYER SCREEN (Auto Landscape / Portrait) ----------------
+// ---------------- RESPONSIVE PLAYER SCREEN ----------------
 class PlayerScreen extends StatefulWidget {
   final List<MediaItem> playlist;
   final int initialIndex;
@@ -523,7 +492,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
   void dispose() {
     pulseController.dispose();
     player.dispose();
-    // Reset orientation on exiting player
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -737,7 +705,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Video or Audio Stage
                 if (isAudio)
                   Container(
                     decoration: const BoxDecoration(
@@ -808,7 +775,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
                 if (brightness < 0.98)
                   IgnorePointer(child: Container(color: Colors.black.withOpacity(1.0 - brightness))),
 
-                // Seeking Zones
                 Positioned(
                   left: 0,
                   top: 70,
@@ -836,7 +802,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
                   ),
                 ),
 
-                // Side Quick Actions
                 if (isControlsVisible)
                   Positioned(
                     left: 14,
@@ -860,7 +825,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
                     ),
                   ),
 
-                // Top Bar
                 if (isControlsVisible && !isLocked)
                   Positioned(
                     top: 0,
@@ -894,7 +858,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
                             ),
                           ),
-                          // Rotate Toggle Button
                           IconButton(
                             icon: Icon(inLandscape ? Icons.screen_lock_portrait_rounded : Icons.screen_lock_landscape_rounded, color: Colors.white70, size: 20),
                             tooltip: 'Rotate Screen',
@@ -909,7 +872,6 @@ class _PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSt
                     ),
                   ),
 
-                // Bottom Bar
                 if (isControlsVisible && !isLocked)
                   Positioned(
                     bottom: 0,
