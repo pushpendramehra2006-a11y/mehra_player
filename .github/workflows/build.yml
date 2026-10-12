@@ -30,6 +30,9 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Generate Official Android Icons
+        run: dart run flutter_launcher_icons
+
       - name: Build Android APK
         run: flutter build apk --release
 
@@ -38,7 +41,7 @@ jobs:
         with:
           tag_name: latest
           name: "Mehra Player Latest Build"
-          body: "Mehra Player latest release with smooth 120 FPS playback, Pixel Vivid HDR, 8D audio, and clean light aesthetic icon."
+          body: "Mehra Player release with smooth 120 FPS playback, Pixel Vivid HDR, 8D audio, and clean light aesthetic icon."
           files: build/app/outputs/flutter-apk/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
