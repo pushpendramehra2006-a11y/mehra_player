@@ -289,7 +289,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
             children: const [
               Icon(Icons.download_rounded, color: Color(0xFF00E676)),
               SizedBox(width: 8),
-              Text("Universal Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text("Mehra Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           content: SingleChildScrollView(
