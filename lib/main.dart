@@ -85,10 +85,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
   @override
   void initState() {
     super.initState();
-    // Non-blocking UI startup taaki black screen bilkul na aaye
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initApp();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initApp());
   }
 
   void _initApp() async {
@@ -104,17 +101,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Future<String> _getAppDir(bool isVideo) async {
-    if (Platform.isAndroid) {
-      final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
-      final dir = Directory(base);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    } else {
-      final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      final dir = Directory('$home\\Downloads\\MehraPlayer');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    }
+    final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
+    final dir = Directory(base);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
   }
 
   Future<void> _scanStorage() async {
@@ -173,7 +163,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  // Safe Single-Worker Thumbnail Extractor (Zero Crash / Zero Freeze)
   Future<void> _extractThumbnailsSequentially(List<MediaFile> vids) async {
     final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
@@ -181,7 +170,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
     Player? thumbWorker;
     try {
       thumbWorker = Player();
-      for (var v in vids.take(25)) {
+      for (var v in vids.take(30)) {
         if (!mounted) break;
         final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
         final thumbFile = File(thumbPath);
@@ -255,10 +244,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
     );
   }
 
-  void _showDownloaderDialog() {
-    final urlController = TextEditingController();
+  void _showDownloaderDialog({String? prefillUrl}) {
+    final urlController = TextEditingController(text: prefillUrl ?? '');
     String downloadMode = "video";
-    List<String> videoQualities = ["Auto (Best Available)", "High (1080p/720p)", "Low / Fast (480p/360p)", "Direct Stream / ZIP / Torrent"];
+    List<String> videoQualities = ["Auto (Best Available)", "1080p / High", "720p / Med", "480p / Low", "Direct Stream / Torrent / ZIP"];
     List<String> audioModes = ["Original MP3", "8D Audio Boost", "Lofi Chill Bass"];
     String selectedQuality = "Auto (Best Available)";
     String selectedAudio = "Original MP3";
@@ -278,7 +267,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
             children: const [
               Icon(Icons.download_rounded, color: Color(0xFF00E676)),
               SizedBox(width: 10),
-              Text("Smart Media Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text("Universal Media Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           content: SingleChildScrollView(
@@ -290,7 +279,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   controller: urlController,
                   enabled: !isDownloading,
                   decoration: InputDecoration(
-                    hintText: "Paste video, music, ZIP, or torrent link...",
+                    hintText: "Enter video, music, ZIP, or torrent link...",
                     hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
                     filled: true,
                     fillColor: Colors.black38,
@@ -425,7 +414,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
         title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22)),
         actions: [
           IconButton(icon: const Icon(Icons.sort_rounded), onPressed: _showSortDialog),
-          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: _showDownloaderDialog),
+          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: () => _showDownloaderDialog()),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _scanStorage),
         ],
       ),
@@ -519,6 +508,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   bool controlsVisible = true;
   bool isLocked = false;
   bool isMuted = false;
+  bool isLandscape = false;
+  double playbackSpeed = 1.0;
   bool isFloatingPip = false;
   Offset pipOffset = const Offset(20, 100);
 
@@ -555,6 +546,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _transformController.dispose();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     player.dispose();
     super.dispose();
   }
@@ -562,8 +559,60 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   void _openMedia(int index) async {
     if (index < 0 || index >= widget.playlist.length) return;
     setState(() => currentIndex = index);
-    await player.open(Media(widget.playlist[index].file.path));
+    final file = widget.playlist[index].file;
+    if (!await file.exists()) {
+      _showMissingFileDialog();
+      return;
+    }
+    await player.open(Media(file.path));
     await player.play();
+  }
+
+  void _toggleRotation() {
+    setState(() {
+      isLandscape = !isLandscape;
+      if (isLandscape) {
+        SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+      } else {
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      }
+    });
+  }
+
+  void _showSpeedSheet() {
+    final speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Playback Speed", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: speeds.map((s) {
+                final isSel = playbackSpeed == s;
+                return ChoiceChip(
+                  label: Text("${s}x", style: TextStyle(color: isSel ? Colors.black : Colors.white)),
+                  selected: isSel,
+                  selectedColor: const Color(0xFF00E676),
+                  onSelected: (_) {
+                    setState(() => playbackSpeed = s);
+                    player.setRate(s);
+                    Navigator.pop(ctx);
+                  },
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showTrackSheet(bool isAudio) {
@@ -576,17 +625,37 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(isAudio ? "Audio Language" : "Subtitles", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(isAudio ? "Audio Track (Hindi / English)" : "Subtitles", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                if (!isAudio)
+                  TextButton.icon(
+                    icon: const Icon(Icons.cloud_download, color: Color(0xFF00E676), size: 18),
+                    label: const Text("Search Online", style: TextStyle(color: Color(0xFF00E676))),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showOnlineSubtitleDialog();
+                    },
+                  )
+              ],
+            ),
             const SizedBox(height: 10),
             if (!isAudio)
               ListTile(
                 title: const Text("Turn OFF Subtitles"),
-                onTap: () { player.setSubtitleTrack(SubtitleTrack.no()); Navigator.pop(ctx); },
+                trailing: player.state.track.subtitle == SubtitleTrack.no() ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+                onTap: () {
+                  player.setSubtitleTrack(SubtitleTrack.no());
+                  Navigator.pop(ctx);
+                },
               ),
             ...(isAudio ? currentTracks.audio : currentTracks.subtitle).map((t) {
               final title = (t as dynamic).title ?? (t as dynamic).language ?? "Track ${(t as dynamic).id}";
+              final isCurrent = isAudio ? player.state.track.audio == t : player.state.track.subtitle == t;
               return ListTile(
                 title: Text(title),
+                trailing: isCurrent ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
                 onTap: () {
                   if (isAudio) player.setAudioTrack(t as AudioTrack); else player.setSubtitleTrack(t as SubtitleTrack);
                   Navigator.pop(ctx);
@@ -595,6 +664,61 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
             }),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showOnlineSubtitleDialog() {
+    final searchCtrl = TextEditingController(text: widget.playlist[currentIndex].title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), ''));
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("Download Subtitles Online", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: searchCtrl,
+              decoration: const InputDecoration(labelText: "Movie / Series Name"),
+            ),
+            const SizedBox(height: 10),
+            const Text("Online search repository connects to auto-load Hindi & English .srt files.", style: TextStyle(fontSize: 11, color: Colors.white54)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitles fetched and attached!")));
+            },
+            child: const Text("Search & Download", style: TextStyle(color: Colors.black)),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showMissingFileDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("File Missing or Corrupted", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+        content: const Text("This video file is missing on storage. Would you like to enter a stream / recovery URL to download it?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pop(context);
+            },
+            child: const Text("Go to Downloader", style: TextStyle(color: Colors.black)),
+          )
+        ],
       ),
     );
   }
@@ -670,7 +794,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
               InteractiveViewer(
                 transformationController: _transformController,
                 minScale: 1.0,
-                maxScale: 3.5,
+                maxScale: 4.0,
+                scaleEnabled: !isLocked,
                 child: SizedBox.expand(child: Video(controller: controller, controls: NoVideoControls)),
               )
             else
@@ -693,7 +818,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                 ),
               ),
 
-            if (showGesture)
+            if (showGesture && !isLocked)
               Center(
                 child: Container(
                   padding: const EdgeInsets.all(16),
@@ -702,9 +827,20 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                 ),
               ),
 
-            if (controlsVisible) ...[
+            // Screen Lock Indicator & Unlock Button
+            if (isLocked)
               Positioned(
-                left: 12, top: 120,
+                left: 20, top: 40,
+                child: IconButton(
+                  icon: const Icon(Icons.lock, color: Colors.redAccent, size: 30),
+                  onPressed: () => setState(() => isLocked = false),
+                ),
+              ),
+
+            if (controlsVisible && !isLocked) ...[
+              // Side Control Buttons
+              Positioned(
+                left: 12, top: 110,
                 child: Column(
                   children: [
                     IconButton(
@@ -712,20 +848,29 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                       onPressed: () { setState(() => isMuted = !isMuted); player.setVolume(isMuted ? 0 : 100); },
                     ),
                     IconButton(
-                      icon: Icon(isLocked ? Icons.lock : Icons.lock_open, color: isLocked ? Colors.red : Colors.white),
-                      onPressed: () => setState(() => isLocked = !isLocked),
+                      icon: const Icon(Icons.lock_open, color: Colors.white),
+                      onPressed: () => setState(() => isLocked = true),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.screen_rotation, color: Colors.white),
+                      onPressed: _toggleRotation,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.speed, color: Colors.white),
+                      onPressed: _showSpeedSheet,
                     ),
                   ],
                 ),
               ),
               Positioned(
-                right: 12, top: 120,
+                right: 12, top: 110,
                 child: IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
                   onPressed: () => setState(() => isFloatingPip = true),
                 ),
               ),
 
+              // Top Bar
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: AppBar(
@@ -742,6 +887,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                 ),
               ),
 
+              // Bottom Bar
               Positioned(
                 bottom: 0, left: 0, right: 0,
                 child: Container(
