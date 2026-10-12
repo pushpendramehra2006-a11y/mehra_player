@@ -201,7 +201,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
     }
   }
 
-  // Native Android Thumbnail Provider (100% Reliable & Fast)
   Future<void> _fetchNativeThumbnails() async {
     for (var v in videoList) {
       if (!mounted) break;
@@ -546,6 +545,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   bool isLand = false;
   double speed = 1.0;
   String currentAudioMode = "Standard Stereo";
+  String currentColorMode = "Normal Colors";
 
   double bright = 0.5;
   double vol = 1.0;
@@ -583,7 +583,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused && isPlaying) {
-      player.play(); // Background continuous play
+      player.play();
     }
   }
 
@@ -607,22 +607,91 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     await player.open(Media(widget.playlist[i].path));
     await player.play();
     _applyAudioMode(currentAudioMode);
+    _applyColorMode(currentColorMode);
     _sendNotification();
   }
 
   void _applyAudioMode(String mode) {
     setState(() => currentAudioMode = mode);
+    dynamic native = player.platform;
     if (mode == "8D Audio Surround") {
-      (player.platform as dynamic)?.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
+      native?.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
     } else if (mode == "16D Spatial") {
-      (player.platform as dynamic)?.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
+      native?.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
     } else if (mode == "Dolby Atmos Bass") {
-      (player.platform as dynamic)?.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
+      native?.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
     } else if (mode == "Lofi Chill Bass") {
-      (player.platform as dynamic)?.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
+      native?.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
     } else {
-      (player.platform as dynamic)?.setProperty('af', '');
+      native?.setProperty('af', '');
     }
+  }
+
+  // Google Pixel / OLED High Vivid Color Resolution Engine
+  void _applyColorMode(String mode) {
+    setState(() => currentColorMode = mode);
+    dynamic native = player.platform;
+    if (mode == "Pixel Vivid HDR") {
+      // Saturation + Contrast + Gamma boost with smart unsharp mask
+      native?.setProperty('vf', 'eq=saturation=1.35:contrast=1.15:brightness=0.02:gamma=1.05,unsharp=5:5:0.8:5:5:0.0');
+    } else if (mode == "Ultra AMOLED") {
+      // Deep punchy OLED colors
+      native?.setProperty('vf', 'eq=saturation=1.45:contrast=1.22:brightness=0.01:gamma=1.0,unsharp=3:3:0.6');
+    } else if (mode == "Cinema Rich") {
+      native?.setProperty('vf', 'eq=saturation=1.2:contrast=1.08:gamma=1.1');
+    } else {
+      native?.setProperty('vf', ''); // Original natural colors
+    }
+  }
+
+  void _showColorModesSheet() {
+    final modes = [
+      "Normal Colors",
+      "Pixel Vivid HDR",
+      "Ultra AMOLED",
+      "Cinema Rich"
+    ];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.palette_rounded, color: Color(0xFF00E676)),
+                SizedBox(width: 8),
+                Text("Color & Resolution Booster", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text("Google Pixel & OLED ultra-vivid visual enhancement", style: TextStyle(fontSize: 12, color: Colors.white54)),
+            const SizedBox(height: 12),
+            ...modes.map((m) {
+              final isSel = currentColorMode == m;
+              return ListTile(
+                title: Text(m, style: TextStyle(fontWeight: isSel ? FontWeight.bold : FontWeight.normal)),
+                subtitle: Text(
+                  m == "Pixel Vivid HDR" ? "High saturation, crisp edges & HDR tone mapping" :
+                  m == "Ultra AMOLED" ? "Deep contrast, rich blacks & vibrant colors" :
+                  m == "Cinema Rich" ? "Warm balanced cinematic colors" : "Original raw video colors",
+                  style: const TextStyle(fontSize: 11, color: Colors.white38),
+                ),
+                trailing: isSel ? const Icon(Icons.check_circle, color: Color(0xFF00E676)) : null,
+                onTap: () {
+                  _applyColorMode(m);
+                  Navigator.pop(ctx);
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showAudioEffectsSheet() {
@@ -832,7 +901,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
             if (controls && !isLocked) ...[
               // Left control buttons
               Positioned(
-                left: 10, top: 100,
+                left: 10, top: 90,
                 child: Column(
                   children: [
                     IconButton(
@@ -851,6 +920,15 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                       icon: const Icon(Icons.speed, color: Colors.white),
                       onPressed: _showSpeedSheet,
                     ),
+                    if (cur.isVideo)
+                      IconButton(
+                        icon: Icon(
+                          Icons.palette_rounded,
+                          color: currentColorMode != "Normal Colors" ? const Color(0xFF00E676) : Colors.white,
+                        ),
+                        tooltip: "Color & HDR Booster",
+                        onPressed: _showColorModesSheet,
+                      ),
                     IconButton(
                       icon: const Icon(Icons.graphic_eq, color: Color(0xFF00E676)),
                       tooltip: "8D/Dolby Atmos",
@@ -861,7 +939,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
               ),
               // PiP Button (Native Android PiP)
               Positioned(
-                right: 10, top: 100,
+                right: 10, top: 90,
                 child: IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
                   onPressed: _triggerNativePip,
