@@ -76,7 +76,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
   bool isScanning = false;
-  String sortOption = "time_desc"; // Default: Newest first
+  String sortOption = "time_desc";
 
   @override
   void initState() {
@@ -409,7 +409,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Extraction failed or permission restricted")),
+          const SnackBar(content: Text("Extraction failed")),
         );
       }
     }
@@ -824,12 +824,25 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
+    // Listen to native notification actions (Prev, Play/Pause, Next)
+    platformChannel.setMethodCallHandler((call) async {
+      if (call.method == "onPlayPauseTrigger") {
+        player.playOrPause();
+      } else if (call.method == "onPrevTrigger") {
+        if (currentIndex > 0) _playIndex(currentIndex - 1);
+      } else if (call.method == "onNextTrigger") {
+        if (currentIndex + 1 < widget.playlist.length) _playIndex(currentIndex + 1);
+      }
+    });
+
+    // Zero-lag 8K & 120 FPS high-refresh rate GPU hardware configuration
     dynamic native = player.platform;
     native?.setProperty('hwdec', 'mediacodec-all');
-    native?.setProperty('video-sync', 'display-resample');
-    native?.setProperty('interpolation', 'yes');
-    native?.setProperty('tscale', 'oversample');
+    native?.setProperty('vo', 'gpu');
+    native?.setProperty('opengl-swapinterval', '0'); // Unlock 120Hz display refresh rate
+    native?.setProperty('video-sync', 'audio');
     native?.setProperty('framedrop', 'vo');
+    native?.setProperty('interpolation', 'no'); // Disable synthetic motion blur lag
 
     player.stream.playing.listen((p) {
       if (mounted) setState(() => isPlaying = p);
