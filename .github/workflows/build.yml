@@ -27,17 +27,29 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Clean Light Icon Asset
+      - name: Generate Clean Light Aesthetic Icons
         run: |
-          mkdir -p assets/icon
-          # Clean light minimal play button icon download
-          curl -sL "https://raw.githubusercontent.com/google/material-design-icons/master/png/av/play_circle_filled/materialicons/48dp/2x/baseline_play_circle_filled_black_48dp.png" -o assets/icon/app_icon.png
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          
+          # Clean Light Aesthetic Icon generation (Soft Pastel Slate + Dark Slate Play Triangle)
+          convert -size 512x512 xc:"#F1F5F9" \
+            -fill "#CBD5E1" -draw "rectangle 0,0 511,511" \
+            -fill "#F8FAFC" -draw "rectangle 12,12 499,499" \
+            -fill "#1E293B" -draw "polygon 200,150 360,256 200,362" \
+            base_icon.png
+
+          # Generate exact standard Android mipmap resolutions
+          mkdir -p android/app/src/main/res/mipmap-mdpi && convert base_icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          mkdir -p android/app/src/main/res/mipmap-hdpi && convert base_icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          mkdir -p android/app/src/main/res/mipmap-xhdpi && convert base_icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi && convert base_icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi && convert base_icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          
+          rm base_icon.png
+          echo "All Android launcher icons generated successfully!"
 
       - name: Install Dependencies
         run: flutter pub get
-
-      - name: Generate Official Android Icons
-        run: dart run flutter_launcher_icons
 
       - name: Build Android APK
         run: flutter build apk --release
