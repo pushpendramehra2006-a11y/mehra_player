@@ -79,12 +79,16 @@ class _MainTabScreenState extends State<MainTabScreen> {
   int _currentNavIndex = 0;
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
+  bool isLoading = true;
   String sortBy = "time";
 
   @override
   void initState() {
     super.initState();
-    _initApp();
+    // Non-blocking UI startup taaki black screen bilkul na aaye
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initApp();
+    });
   }
 
   void _initApp() async {
@@ -100,40 +104,42 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Future<String> _getAppDir(bool isVideo) async {
-    final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
-    final dir = Directory(base);
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir.path;
+    if (Platform.isAndroid) {
+      final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
+      final dir = Directory(base);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir.path;
+    } else {
+      final home = Platform.environment['USERPROFILE'] ?? 'C:';
+      final dir = Directory('$home\\Downloads\\MehraPlayer');
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir.path;
+    }
   }
 
   Future<void> _scanStorage() async {
+    if (!mounted) return;
+    setState(() => isLoading = true);
+
     List<Directory> targetDirs = [];
     if (Platform.isAndroid) {
-      final root = Directory('/storage/emulated/0');
-      if (root.existsSync()) {
-        try {
-          final topLevel = root.listSync();
-          for (var item in topLevel) {
-            if (item is Directory) {
-              final name = item.path.split('/').last;
-              if (!name.startsWith('.') && name != 'Android') {
-                targetDirs.add(item);
-              }
-            }
-          }
-        } catch (_) {}
+      final safeFolders = ['DCIM', 'Movies', 'Download', 'WhatsApp', 'Telegram', 'Snapchat', 'Music', 'Documents'];
+      for (var f in safeFolders) {
+        final d = Directory('/storage/emulated/0/$f');
+        if (d.existsSync()) targetDirs.add(d);
       }
-      targetDirs.add(Directory('/storage/emulated/0/Android/media'));
+      final mediaDir = Directory('/storage/emulated/0/Android/media');
+      if (mediaDir.existsSync()) targetDirs.add(mediaDir);
     } else {
       final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      targetDirs = [Directory('$home\\Videos'), Directory('$home\\Downloads')];
+      targetDirs = [Directory('$home\\Videos'), Directory('$home\\Downloads'), Directory('$home\\Music')];
     }
 
     List<MediaFile> vids = [];
     List<MediaFile> auds = [];
 
-    for (var dir in targetDirs) {
-      if (dir.existsSync()) {
+    await Future.microtask(() {
+      for (var dir in targetDirs) {
         try {
           final entries = dir.listSync(recursive: true, followLinks: false);
           for (var e in entries) {
@@ -145,51 +151,57 @@ class _MainTabScreenState extends State<MainTabScreen> {
               final folder = e.parent.path.split(Platform.pathSeparator).last;
               final stat = e.statSync();
 
-              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv')) {
+              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv') || p.endsWith('.ts')) {
                 vids.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: true, folderName: folder, modifiedTime: stat.modified));
-              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg')) {
+              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac')) {
                 auds.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: false, folderName: folder, modifiedTime: stat.modified));
               }
             }
           }
         } catch (_) {}
       }
-    }
+    });
 
     if (mounted) {
       setState(() {
         videoList = vids;
         audioList = auds;
+        isLoading = false;
       });
       _applySorting();
-      _generateRealThumbnails(vids);
+      _extractThumbnailsSequentially(vids);
     }
   }
 
-  Future<void> _generateRealThumbnails(List<MediaFile> vids) async {
+  // Safe Single-Worker Thumbnail Extractor (Zero Crash / Zero Freeze)
+  Future<void> _extractThumbnailsSequentially(List<MediaFile> vids) async {
     final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
 
-    for (var v in vids.take(30)) {
-      final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
-      final thumbFile = File(thumbPath);
+    Player? thumbWorker;
+    try {
+      thumbWorker = Player();
+      for (var v in vids.take(25)) {
+        if (!mounted) break;
+        final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
+        final thumbFile = File(thumbPath);
 
-      if (await thumbFile.exists()) {
-        if (mounted) setState(() => v.thumbPath = thumbPath);
-      } else {
-        try {
-          final tempPlayer = Player();
-          await tempPlayer.open(Media(v.file.path), play: false);
-          await Future.delayed(const Duration(milliseconds: 300));
-          final Uint8List? screenshot = await tempPlayer.screenshot(format: 'image/jpeg');
-          await tempPlayer.dispose();
-
-          if (screenshot != null && screenshot.isNotEmpty) {
-            await thumbFile.writeAsBytes(screenshot);
-            if (mounted) setState(() => v.thumbPath = thumbPath);
-          }
-        } catch (_) {}
+        if (await thumbFile.exists()) {
+          if (mounted) setState(() => v.thumbPath = thumbPath);
+        } else {
+          try {
+            await thumbWorker.open(Media(v.file.path), play: false);
+            await Future.delayed(const Duration(milliseconds: 200));
+            final Uint8List? screenshot = await thumbWorker.screenshot(format: 'image/jpeg');
+            if (screenshot != null && screenshot.isNotEmpty) {
+              await thumbFile.writeAsBytes(screenshot);
+              if (mounted) setState(() => v.thumbPath = thumbPath);
+            }
+          } catch (_) {}
+        }
       }
+    } finally {
+      thumbWorker?.dispose();
     }
   }
 
@@ -218,10 +230,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Sort By", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text("Sort Files", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ListTile(
               leading: const Icon(Icons.access_time_rounded),
-              title: const Text("Date / Time"),
+              title: const Text("Date / Time (Newest First)"),
               trailing: sortBy == "time" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
               onTap: () { setState(() => sortBy = "time"); _applySorting(); Navigator.pop(ctx); },
             ),
@@ -233,7 +245,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.data_usage_rounded),
-              title: const Text("Size (Large First)"),
+              title: const Text("Size (Large to Small)"),
               trailing: sortBy == "size" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
               onTap: () { setState(() => sortBy = "size"); _applySorting(); Navigator.pop(ctx); },
             ),
@@ -245,14 +257,15 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
   void _showDownloaderDialog() {
     final urlController = TextEditingController();
-    String downloadType = "mp4";
-    List<String> qualities = ["Auto Best", "1080p", "720p", "480p", "ZIP / Torrent / Direct"];
-    List<String> audioFx = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
-    String selectedQuality = "Auto Best";
-    String selectedAudioEffect = "Standard MP3";
+    String downloadMode = "video";
+    List<String> videoQualities = ["Auto (Best Available)", "High (1080p/720p)", "Low / Fast (480p/360p)", "Direct Stream / ZIP / Torrent"];
+    List<String> audioModes = ["Original MP3", "8D Audio Boost", "Lofi Chill Bass"];
+    String selectedQuality = "Auto (Best Available)";
+    String selectedAudio = "Original MP3";
     bool isDownloading = false;
     double downloadProgress = 0.0;
     int progressPercent = 0;
+    String statusText = "";
 
     showDialog(
       context: context,
@@ -265,7 +278,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
             children: const [
               Icon(Icons.download_rounded, color: Color(0xFF00E676)),
               SizedBox(width: 10),
-              Text("Universal Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Text("Smart Media Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           content: SingleChildScrollView(
@@ -277,7 +290,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   controller: urlController,
                   enabled: !isDownloading,
                   decoration: InputDecoration(
-                    hintText: "Paste YouTube, Insta, Torrent, ZIP link...",
+                    hintText: "Paste video, music, ZIP, or torrent link...",
                     hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
                     filled: true,
                     fillColor: Colors.black38,
@@ -285,47 +298,49 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
+                Row(
                   children: [
                     ChoiceChip(
                       label: const Text("Video / ZIP"),
-                      selected: downloadType == "mp4",
+                      selected: downloadMode == "video",
                       selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
+                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadMode = "video"),
                     ),
+                    const SizedBox(width: 8),
                     ChoiceChip(
-                      label: const Text("MP3 Audio"),
-                      selected: downloadType == "mp3",
+                      label: const Text("Audio MP3"),
+                      selected: downloadMode == "audio",
                       selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
+                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadMode = "audio"),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
+                const Text("Quality / Format:", style: TextStyle(fontSize: 12, color: Colors.white60)),
+                const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
-                  children: (downloadType == "mp4" ? qualities : audioFx).map((opt) {
-                    final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == opt;
+                  children: (downloadMode == "video" ? videoQualities : audioModes).map((opt) {
+                    final isSel = (downloadMode == "video" ? selectedQuality : selectedAudio) == opt;
                     return ChoiceChip(
                       label: Text(opt, style: TextStyle(color: isSel ? Colors.black : Colors.white, fontSize: 11)),
                       selected: isSel,
                       selectedColor: const Color(0xFF00E676),
                       onSelected: isDownloading ? null : (_) => setDialogState(() {
-                        if (downloadType == "mp4") selectedQuality = opt; else selectedAudioEffect = opt;
+                        if (downloadMode == "video") selectedQuality = opt; else selectedAudio = opt;
                       }),
                     );
                   }).toList(),
                 ),
                 if (isDownloading) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
                     child: LinearProgressIndicator(value: downloadProgress > 0 ? downloadProgress : null, color: const Color(0xFF00E676)),
                   ),
                   const SizedBox(height: 6),
-                  Text("Downloading: $progressPercent%", style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                  Text(statusText.isEmpty ? "Downloading: $progressPercent%" : statusText, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
                 ]
               ],
             ),
@@ -339,17 +354,27 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   : () async {
                       final u = urlController.text.trim();
                       if (u.isEmpty || !u.startsWith("http")) return;
-                      setDialogState(() { isDownloading = true; progressPercent = 1; });
+                      setDialogState(() {
+                        isDownloading = true;
+                        statusText = "Connecting & resolving stream...";
+                      });
                       try {
-                        final isVid = downloadType == "mp4";
+                        final isVid = downloadMode == "video";
                         final dir = await _getAppDir(isVid);
-                        final ext = u.contains('.zip') ? 'zip' : (isVid ? 'mp4' : 'mp3');
-                        final path = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
+                        String ext = "mp4";
+                        if (u.contains(".zip")) ext = "zip";
+                        else if (u.contains(".torrent")) ext = "torrent";
+                        else if (!isVid) ext = "mp3";
+
+                        final savePath = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
                         final req = http.Request('GET', Uri.parse(u));
+                        req.headers['User-Agent'] = 'Mozilla/5.0';
                         final res = await req.send();
+
                         final total = res.contentLength ?? 0;
                         int got = 0;
-                        final sink = File(path).openWrite();
+                        final sink = File(savePath).openWrite();
+
                         await res.stream.listen((chunk) {
                           sink.add(chunk);
                           got += chunk.length;
@@ -357,17 +382,24 @@ class _MainTabScreenState extends State<MainTabScreen> {
                             if (total > 0) {
                               downloadProgress = (got / total).clamp(0.0, 1.0);
                               progressPercent = (downloadProgress * 100).toInt();
+                              statusText = "Downloading: $progressPercent%";
+                            } else {
+                              statusText = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB downloaded";
                             }
                           });
                         }).asFuture();
+
                         await sink.close();
                         Navigator.pop(ctx);
                         _scanStorage();
-                      } catch (_) {
-                        setDialogState(() => isDownloading = false);
+                      } catch (e) {
+                        setDialogState(() {
+                          isDownloading = false;
+                          statusText = "Error: Check link accessibility";
+                        });
                       }
                     },
-              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text("Start Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -397,7 +429,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _scanStorage),
         ],
       ),
-      body: _currentNavIndex == 0 ? _buildVideosTab() : _buildMusicTab(),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF00E676)))
+          : (_currentNavIndex == 0 ? _buildVideosTab() : _buildMusicTab()),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentNavIndex,
         onTap: (i) => setState(() => _currentNavIndex = i),
@@ -413,6 +447,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Widget _buildVideosTab() {
+    if (videoList.isEmpty) {
+      return const Center(child: Text("No videos found. Click refresh.", style: TextStyle(color: Colors.white38)));
+    }
     return ListView.builder(
       itemCount: videoList.length,
       itemBuilder: (ctx, index) {
@@ -437,6 +474,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Widget _buildMusicTab() {
+    if (audioList.isEmpty) {
+      return const Center(child: Text("No music files found.", style: TextStyle(color: Colors.white38)));
+    }
     return ListView.builder(
       itemCount: audioList.length,
       itemBuilder: (ctx, i) {
