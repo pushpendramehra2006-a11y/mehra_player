@@ -35,7 +35,7 @@ class MainActivity: FlutterActivity() {
                             val bitmap = ThumbnailUtils.createVideoThumbnail(path, MediaStore.Images.Thumbnails.MINI_KIND)
                             if (bitmap != null) {
                                 val stream = ByteArrayOutputStream()
-                                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
                                 result.success(stream.toByteArray())
                             } else {
                                 result.success(null)
@@ -77,6 +77,11 @@ class MainActivity: FlutterActivity() {
                     showMediaNotification(title, isPlaying)
                     result.success(null)
                 }
+                "cancelNotification" -> {
+                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.cancel(101)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -92,55 +97,50 @@ class MainActivity: FlutterActivity() {
     }
 
     private fun showMediaNotification(title: String, isPlaying: Boolean) {
-        val channelId = "mehra_media_playback"
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val chan = NotificationChannel(channelId, "Mehra Player Playback", NotificationManager.IMPORTANCE_LOW)
-            chan.description = "Audio & Video playback controls"
-            manager.createNotificationChannel(chan)
+        try {
+            val channelId = "mehra_media_playback"
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val chan = NotificationChannel(channelId, "Mehra Player Playback", NotificationManager.IMPORTANCE_LOW)
+                chan.description = "Audio & Video playback controls"
+                manager.createNotificationChannel(chan)
+            }
+
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val flagImmutable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+
+            val pOpenIntent = PendingIntent.getActivity(this, 0, openIntent, flagImmutable)
+            val pPrev = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).apply { action = "ACTION_PREV" }, flagImmutable)
+            val pPlay = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java).apply { action = "ACTION_PLAY_PAUSE" }, flagImmutable)
+            val pNext = PendingIntent.getActivity(this, 3, Intent(this, MainActivity::class.java).apply { action = "ACTION_NEXT" }, flagImmutable)
+
+            val playIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, channelId)
+            } else {
+                Notification.Builder(this)
+            }
+
+            builder.setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle(title)
+                .setContentText("Mehra Player")
+                .setContentIntent(pOpenIntent)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOngoing(isPlaying)
+                .addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, "Previous", pPrev).build())
+                .addAction(Notification.Action.Builder(playIcon, "Play/Pause", pPlay).build())
+                .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", pNext).build())
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                builder.style = Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2)
+            }
+
+            manager.notify(101, builder.build())
+        } catch (e: Exception) {
+            // Keep app safe from notification crashes
         }
-
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val pOpenIntent = PendingIntent.getActivity(
-            this, 0, openIntent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        )
-
-        // Action intents for Notification Card
-        val prevIntent = Intent(this, MainActivity::class.java).apply { action = "ACTION_PREV" }
-        val pPrev = PendingIntent.getActivity(this, 1, prevIntent, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-
-        val playIntent = Intent(this, MainActivity::class.java).apply { action = "ACTION_PLAY_PAUSE" }
-        val pPlay = PendingIntent.getActivity(this, 2, playIntent, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-
-        val nextIntent = Intent(this, MainActivity::class.java).apply { action = "ACTION_NEXT" }
-        val pNext = PendingIntent.getActivity(this, 3, nextIntent, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, channelId)
-        } else {
-            Notification.Builder(this)
-        }
-
-        val playIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-
-        builder.setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(title)
-            .setContentText("Mehra Player")
-            .setContentIntent(pOpenIntent)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setOngoing(isPlaying)
-            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_previous, "Previous", pPrev).build())
-            .addAction(Notification.Action.Builder(playIcon, "Play/Pause", pPlay).build())
-            .addAction(Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", pNext).build())
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            builder.style = Notification.MediaStyle()
-                .setShowActionsInCompactView(0, 1, 2)
-        }
-
-        manager.notify(101, builder.build())
     }
 }

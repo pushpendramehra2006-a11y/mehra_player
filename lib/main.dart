@@ -783,24 +783,15 @@ class PlayitVideoPlayer extends StatefulWidget {
   State<PlayitVideoPlayer> createState() => _PlayitVideoPlayerState();
 }
 
-class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindingObserver {
-  late final player = Player(
-    configuration: const PlayerConfiguration(
-      bufferSize: 64 * 1024 * 1024,
-      pitch: true,
-    ),
-  );
-  late final controller = VideoController(
-    player,
-    configuration: const VideoControllerConfiguration(
-      enableHardwareAcceleration: true,
-    ),
-  );
+class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
+  late final Player player;
+  VideoController? controller;
   late TransformationController _zoomCtrl;
   late int currentIndex;
   bool isPlaying = false;
   Duration pos = Duration.zero;
   Duration dur = Duration.zero;
+  bool isInitialized = false;
 
   bool controls = true;
   bool isLocked = false;
@@ -820,11 +811,33 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
-    // Listen to native notification actions (Prev, Play/Pause, Next)
+    // 1. Initialize stable hardware-accelerated Player
+    player = Player(
+      configuration: const PlayerConfiguration(
+        pitch: true,
+      ),
+    );
+
+    // 2. Hardware acceleration without conflicting flags
+    dynamic native = player.platform;
+    native?.setProperty('hwdec', 'mediacodec');
+    native?.setProperty('vo', 'gpu');
+    native?.setProperty('video-sync', 'audio');
+
+    // 3. Bind VideoController safely
+    if (widget.playlist[currentIndex].isVideo) {
+      controller = VideoController(
+        player,
+        configuration: const VideoControllerConfiguration(
+          enableHardwareAcceleration: true,
+        ),
+      );
+    }
+
+    // 4. Notification method channel listener
     platformChannel.setMethodCallHandler((call) async {
       if (call.method == "onPlayPauseTrigger") {
         player.playOrPause();
@@ -835,18 +848,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
       }
     });
 
-    // Zero-lag 8K & 120 FPS high-refresh rate GPU hardware configuration
-    dynamic native = player.platform;
-    native?.setProperty('hwdec', 'mediacodec-all');
-    native?.setProperty('vo', 'gpu');
-    native?.setProperty('opengl-swapinterval', '0'); // Unlock 120Hz display refresh rate
-    native?.setProperty('video-sync', 'audio');
-    native?.setProperty('framedrop', 'vo');
-    native?.setProperty('interpolation', 'no'); // Disable synthetic motion blur lag
-
     player.stream.playing.listen((p) {
-      if (mounted) setState(() => isPlaying = p);
-      _sendNotification();
+      if (mounted) {
+        setState(() => isPlaying = p);
+        _sendNotification();
+      }
     });
     player.stream.position.listen((p) { if (mounted) setState(() => pos = p); });
     player.stream.duration.listen((d) { if (mounted) setState(() => dur = d); });
@@ -856,23 +862,18 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   }
 
   void _sendNotification() {
-    final cur = widget.playlist[currentIndex];
-    platformChannel.invokeMethod('showNotification', {
-      'title': cur.title,
-      'isPlaying': isPlaying,
-    }).catchError((_) {});
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused && isPlaying) {
-      player.play();
-    }
+    try {
+      final cur = widget.playlist[currentIndex];
+      platformChannel.invokeMethod('showNotification', {
+        'title': cur.title,
+        'isPlaying': isPlaying,
+      }).catchError((_) {});
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    platformChannel.invokeMethod('cancelNotification').catchError((_) {});
     _zoomCtrl.dispose();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -886,12 +887,27 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
 
   void _playIndex(int i) async {
     if (i < 0 || i >= widget.playlist.length) return;
-    setState(() => currentIndex = i);
+    setState(() {
+      currentIndex = i;
+      isInitialized = false;
+    });
+
+    if (widget.playlist[i].isVideo && controller == null) {
+      controller = VideoController(
+        player,
+        configuration: const VideoControllerConfiguration(enableHardwareAcceleration: true),
+      );
+    }
+
     await player.open(Media(widget.playlist[i].path));
     await player.play();
-    _applyAudioMode(currentAudioMode);
-    _applyColorMode(currentColorMode);
-    _sendNotification();
+    
+    if (mounted) {
+      setState(() => isInitialized = true);
+      _applyAudioMode(currentAudioMode);
+      _applyColorMode(currentColorMode);
+      _sendNotification();
+    }
   }
 
   void _applyAudioMode(String mode) {
@@ -913,8 +929,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   void _applyColorMode(String mode) {
     setState(() => currentColorMode = mode);
     dynamic native = player.platform;
-    native?.setProperty('vf', '');
-
     if (mode == "Pixel Vivid HDR") {
       native?.setProperty('saturation', '30');
       native?.setProperty('contrast', '15');
@@ -939,12 +953,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   }
 
   void _showColorModesSheet() {
-    final modes = [
-      "Normal Colors",
-      "Pixel Vivid HDR",
-      "Ultra AMOLED",
-      "Cinema Rich"
-    ];
+    final modes = ["Normal Colors", "Pixel Vivid HDR", "Ultra AMOLED", "Cinema Rich"];
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF161722),
@@ -962,19 +971,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                 Text("Color & Resolution Booster", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               ],
             ),
-            const SizedBox(height: 6),
-            const Text("Google Pixel & OLED ultra-vivid visual enhancement (Hardware GPU)", style: TextStyle(fontSize: 12, color: Colors.white54)),
             const SizedBox(height: 12),
             ...modes.map((m) {
               final isSel = currentColorMode == m;
               return ListTile(
                 title: Text(m, style: TextStyle(fontWeight: isSel ? FontWeight.bold : FontWeight.normal)),
-                subtitle: Text(
-                  m == "Pixel Vivid HDR" ? "High saturation & HDR tone mapping (Lag-Free GPU)" :
-                  m == "Ultra AMOLED" ? "Deep contrast, rich blacks & vibrant colors" :
-                  m == "Cinema Rich" ? "Warm balanced cinematic colors" : "Original raw video colors",
-                  style: const TextStyle(fontSize: 11, color: Colors.white38),
-                ),
                 trailing: isSel ? const Icon(Icons.check_circle, color: Color(0xFF00E676)) : null,
                 onTap: () {
                   _applyColorMode(m);
@@ -997,7 +998,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text("Audio Enhancement / Equalizer", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
@@ -1147,7 +1147,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                 minScale: 1.0,
                 maxScale: 4.0,
                 scaleEnabled: !isLocked,
-                child: SizedBox.expand(child: Video(controller: controller, controls: NoVideoControls)),
+                child: Center(
+                  child: controller != null
+                      ? Video(controller: controller!, controls: NoVideoControls)
+                      : const CircularProgressIndicator(color: Color(0xFF00E676)),
+                ),
               )
             else
               Center(
