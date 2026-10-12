@@ -79,7 +79,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
   int _currentNavIndex = 0;
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
-  List<MediaFile> historyList = [];
   String sortBy = "time";
 
   @override
@@ -101,17 +100,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 
   Future<String> _getAppDir(bool isVideo) async {
-    if (Platform.isAndroid) {
-      final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
-      final dir = Directory(base);
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    } else {
-      final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      final dir = Directory('$home\\Downloads\\MehraPlayer');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir.path;
-    }
+    final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
+    final dir = Directory(base);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
   }
 
   Future<void> _scanStorage() async {
@@ -134,11 +126,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
       targetDirs.add(Directory('/storage/emulated/0/Android/media'));
     } else {
       final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      targetDirs = [
-        Directory('$home\\Videos'),
-        Directory('$home\\Music'),
-        Directory('$home\\Downloads'),
-      ];
+      targetDirs = [Directory('$home\\Videos'), Directory('$home\\Downloads')];
     }
 
     List<MediaFile> vids = [];
@@ -157,9 +145,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
               final folder = e.parent.path.split(Platform.pathSeparator).last;
               final stat = e.statSync();
 
-              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv') || p.endsWith('.ts')) {
+              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv')) {
                 vids.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: true, folderName: folder, modifiedTime: stat.modified));
-              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac')) {
+              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg')) {
                 auds.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: false, folderName: folder, modifiedTime: stat.modified));
               }
             }
@@ -172,19 +160,17 @@ class _MainTabScreenState extends State<MainTabScreen> {
       setState(() {
         videoList = vids;
         audioList = auds;
-        if (vids.isNotEmpty) historyList = vids.take(6).toList();
       });
       _applySorting();
       _generateRealThumbnails(vids);
     }
   }
 
-  // Fast Video Thumbnail Extractor
   Future<void> _generateRealThumbnails(List<MediaFile> vids) async {
     final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
     if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
 
-    for (var v in vids) {
+    for (var v in vids.take(30)) {
       final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
       final thumbFile = File(thumbPath);
 
@@ -194,7 +180,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
         try {
           final tempPlayer = Player();
           await tempPlayer.open(Media(v.file.path), play: false);
-          await Future.delayed(const Duration(milliseconds: 250));
+          await Future.delayed(const Duration(milliseconds: 300));
           final Uint8List? screenshot = await tempPlayer.screenshot(format: 'image/jpeg');
           await tempPlayer.dispose();
 
@@ -231,39 +217,157 @@ class _MainTabScreenState extends State<MainTabScreen> {
         padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Sort By", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-            const SizedBox(height: 14),
+            const Text("Sort By", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ListTile(
-              leading: Icon(Icons.access_time_rounded, color: sortBy == "time" ? const Color(0xFF00E676) : Colors.white54),
-              title: const Text("Date / Time (Newest First)"),
+              leading: const Icon(Icons.access_time_rounded),
+              title: const Text("Date / Time"),
               trailing: sortBy == "time" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () {
-                setState(() => sortBy = "time");
-                _applySorting();
-                Navigator.pop(ctx);
-              },
+              onTap: () { setState(() => sortBy = "time"); _applySorting(); Navigator.pop(ctx); },
             ),
             ListTile(
-              leading: Icon(Icons.sort_by_alpha_rounded, color: sortBy == "name" ? const Color(0xFF00E676) : Colors.white54),
-              title: const Text("File Name (A - Z)"),
+              leading: const Icon(Icons.sort_by_alpha_rounded),
+              title: const Text("Name (A - Z)"),
               trailing: sortBy == "name" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () {
-                setState(() => sortBy = "name");
-                _applySorting();
-                Navigator.pop(ctx);
-              },
+              onTap: () { setState(() => sortBy = "name"); _applySorting(); Navigator.pop(ctx); },
             ),
             ListTile(
-              leading: Icon(Icons.data_usage_rounded, color: sortBy == "size" ? const Color(0xFF00E676) : Colors.white54),
-              title: const Text("File Size (Large to Small)"),
+              leading: const Icon(Icons.data_usage_rounded),
+              title: const Text("Size (Large First)"),
               trailing: sortBy == "size" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () {
-                setState(() => sortBy = "size");
-                _applySorting();
-                Navigator.pop(ctx);
-              },
+              onTap: () { setState(() => sortBy = "size"); _applySorting(); Navigator.pop(ctx); },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDownloaderDialog() {
+    final urlController = TextEditingController();
+    String downloadType = "mp4";
+    List<String> qualities = ["Auto Best", "1080p", "720p", "480p", "ZIP / Torrent / Direct"];
+    List<String> audioFx = ["Standard MP3", "8D Audio", "16D Audio", "Lofi Chill"];
+    String selectedQuality = "Auto Best";
+    String selectedAudioEffect = "Standard MP3";
+    bool isDownloading = false;
+    double downloadProgress = 0.0;
+    int progressPercent = 0;
+
+    showDialog(
+      context: context,
+      barrierDismissible: !isDownloading,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF171822),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Row(
+            children: const [
+              Icon(Icons.download_rounded, color: Color(0xFF00E676)),
+              SizedBox(width: 10),
+              Text("Universal Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: urlController,
+                  enabled: !isDownloading,
+                  decoration: InputDecoration(
+                    hintText: "Paste YouTube, Insta, Torrent, ZIP link...",
+                    hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
+                    filled: true,
+                    fillColor: Colors.black38,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text("Video / ZIP"),
+                      selected: downloadType == "mp4",
+                      selectedColor: const Color(0xFF00E676),
+                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp4"),
+                    ),
+                    ChoiceChip(
+                      label: const Text("MP3 Audio"),
+                      selected: downloadType == "mp3",
+                      selectedColor: const Color(0xFF00E676),
+                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadType = "mp3"),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: (downloadType == "mp4" ? qualities : audioFx).map((opt) {
+                    final isSel = (downloadType == "mp4" ? selectedQuality : selectedAudioEffect) == opt;
+                    return ChoiceChip(
+                      label: Text(opt, style: TextStyle(color: isSel ? Colors.black : Colors.white, fontSize: 11)),
+                      selected: isSel,
+                      selectedColor: const Color(0xFF00E676),
+                      onSelected: isDownloading ? null : (_) => setDialogState(() {
+                        if (downloadType == "mp4") selectedQuality = opt; else selectedAudioEffect = opt;
+                      }),
+                    );
+                  }).toList(),
+                ),
+                if (isDownloading) ...[
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(value: downloadProgress > 0 ? downloadProgress : null, color: const Color(0xFF00E676)),
+                  ),
+                  const SizedBox(height: 6),
+                  Text("Downloading: $progressPercent%", style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                ]
+              ],
+            ),
+          ),
+          actions: [
+            if (!isDownloading) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+              onPressed: isDownloading
+                  ? null
+                  : () async {
+                      final u = urlController.text.trim();
+                      if (u.isEmpty || !u.startsWith("http")) return;
+                      setDialogState(() { isDownloading = true; progressPercent = 1; });
+                      try {
+                        final isVid = downloadType == "mp4";
+                        final dir = await _getAppDir(isVid);
+                        final ext = u.contains('.zip') ? 'zip' : (isVid ? 'mp4' : 'mp3');
+                        final path = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
+                        final req = http.Request('GET', Uri.parse(u));
+                        final res = await req.send();
+                        final total = res.contentLength ?? 0;
+                        int got = 0;
+                        final sink = File(path).openWrite();
+                        await res.stream.listen((chunk) {
+                          sink.add(chunk);
+                          got += chunk.length;
+                          setDialogState(() {
+                            if (total > 0) {
+                              downloadProgress = (got / total).clamp(0.0, 1.0);
+                              progressPercent = (downloadProgress * 100).toInt();
+                            }
+                          });
+                        }).asFuture();
+                        await sink.close();
+                        Navigator.pop(ctx);
+                        _scanStorage();
+                      } catch (_) {
+                        setDialogState(() => isDownloading = false);
+                      }
+                    },
+              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -286,23 +390,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
       backgroundColor: const Color(0xFF0C0D11),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0C0D11),
-        elevation: 0,
-        titleSpacing: 16,
-        title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: Colors.white)),
+        title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22)),
         actions: [
-          IconButton(icon: const Icon(Icons.sort_rounded, color: Colors.white70), tooltip: "Sort Files", onPressed: _showSortDialog),
-          IconButton(
-            icon: const Icon(Icons.folder_open_rounded, color: Colors.white70),
-            onPressed: () async {
-              final res = await FilePicker.platform.pickFiles(type: FileType.media);
-              if (res != null && res.files.single.path != null) {
-                final f = File(res.files.single.path!);
-                _launchPlayer([MediaFile(file: f, title: f.path.split(Platform.pathSeparator).last, sizeBytes: f.lengthSync(), isVideo: !f.path.endsWith('.mp3'), folderName: 'Browse', modifiedTime: DateTime.now())], 0);
-              }
-            },
-          ),
-          IconButton(icon: const Icon(Icons.refresh_rounded, color: Colors.white70), onPressed: _scanStorage),
-          const SizedBox(width: 8),
+          IconButton(icon: const Icon(Icons.sort_rounded), onPressed: _showSortDialog),
+          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: _showDownloaderDialog),
+          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _scanStorage),
         ],
       ),
       body: _currentNavIndex == 0 ? _buildVideosTab() : _buildMusicTab(),
@@ -322,48 +414,23 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
   Widget _buildVideosTab() {
     return ListView.builder(
-      physics: const BouncingScrollPhysics(),
       itemCount: videoList.length,
       itemBuilder: (ctx, index) {
         final item = videoList[index];
-        return InkWell(
+        return ListTile(
           onTap: () => _launchPlayer(videoList, index),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            child: Row(
-              children: [
-                // Real Video Thumbnail Card
-                Container(
-                  width: 120,
-                  height: 70,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E1F2B),
-                    borderRadius: BorderRadius.circular(8),
-                    image: item.thumbPath != null
-                        ? DecorationImage(
-                            image: FileImage(File(item.thumbPath!)),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                  ),
-                  child: item.thumbPath == null
-                      ? Center(child: Icon(Icons.movie_creation_outlined, color: const Color(0xFF00E676).withOpacity(0.5), size: 28))
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-                      const SizedBox(height: 4),
-                      Text("${item.folderName} | ${item.formattedSize}", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5))),
-                    ],
-                  ),
-                ),
-              ],
+          leading: Container(
+            width: 90,
+            height: 55,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1F2B),
+              borderRadius: BorderRadius.circular(6),
+              image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
             ),
+            child: item.thumbPath == null ? const Icon(Icons.movie_creation_outlined, color: Colors.white38) : null,
           ),
+          title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
+          subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
         );
       },
     );
@@ -371,20 +438,19 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
   Widget _buildMusicTab() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: audioList.length,
       itemBuilder: (ctx, i) {
         final item = audioList[i];
         return ListTile(
           onTap: () => _launchPlayer(audioList, i),
           leading: Container(
-            width: 44,
-            height: 44,
+            width: 45,
+            height: 45,
             decoration: BoxDecoration(color: const Color(0xFF00E676).withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
             child: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
-          subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
+          subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
         );
       },
     );
@@ -402,24 +468,8 @@ class PlayitVideoPlayer extends StatefulWidget {
 }
 
 class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProviderStateMixin, WidgetsBindingObserver {
-  late final player = Player(
-    configuration: PlayerConfiguration(
-      bufferSize: 256 * 1024 * 1024,
-      vo: 'gpu-next',
-      pitch: true,
-    ),
-  );
-
-  late final controller = VideoController(
-    player,
-    configuration: const VideoControllerConfiguration(
-      enableHardwareAcceleration: true,
-      hwdec: 'mediacodec',
-    ),
-  );
-
-  late AnimationController _discAnimCtrl;
-  late AnimationController _flowAnimCtrl;
+  late final player = Player(configuration: const PlayerConfiguration(bufferSize: 256 * 1024 * 1024, pitch: true));
+  late final controller = VideoController(player);
   late TransformationController _transformController;
   late int currentIndex;
   bool isPlaying = false;
@@ -428,58 +478,28 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
 
   bool controlsVisible = true;
   bool isLocked = false;
-  bool isLandscape = false;
-  double playbackSpeed = 1.0;
-
-  Tracks currentTracks = const Tracks();
+  bool isMuted = false;
+  bool isFloatingPip = false;
+  Offset pipOffset = const Offset(20, 100);
 
   double brightness = 0.5;
   double volume = 1.0;
-  bool showGestureIndicator = false;
-  String gestureType = "";
-  double gestureValue = 0.0;
+  bool showGesture = false;
+  String gestureName = "";
+  double gestureVal = 0.0;
+  Tracks currentTracks = const Tracks();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     currentIndex = widget.initialIndex;
-
-    _discAnimCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 8));
-    _flowAnimCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))..repeat(reverse: true);
     _transformController = TransformationController();
 
-    try {
-      (player.platform as dynamic)?.setProperty('framedrop', 'vo');
-      (player.platform as dynamic)?.setProperty('video-sync', 'audio');
-      (player.platform as dynamic)?.setProperty('demuxer-max-bytes', '157286400');
-      (player.platform as dynamic)?.setProperty('vd-lavc-fast', 'yes');
-    } catch (_) {}
-
-    player.stream.playing.listen((p) {
-      if (mounted) {
-        setState(() => isPlaying = p);
-        if (p) {
-          _discAnimCtrl.repeat();
-          _flowAnimCtrl.repeat(reverse: true);
-        } else {
-          _discAnimCtrl.stop();
-          _flowAnimCtrl.stop();
-        }
-      }
-    });
-
-    player.stream.position.listen((pos) {
-      if (mounted) setState(() => position = pos);
-    });
-
-    player.stream.duration.listen((d) {
-      if (mounted) setState(() => duration = d);
-    });
-
-    player.stream.tracks.listen((tr) {
-      if (mounted) setState(() => currentTracks = tr);
-    });
+    player.stream.playing.listen((p) { if (mounted) setState(() => isPlaying = p); });
+    player.stream.position.listen((pos) { if (mounted) setState(() => position = pos); });
+    player.stream.duration.listen((d) { if (mounted) setState(() => duration = d); });
+    player.stream.tracks.listen((tr) { if (mounted) setState(() => currentTracks = tr); });
 
     _openMedia(currentIndex);
   }
@@ -494,14 +514,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    _discAnimCtrl.dispose();
-    _flowAnimCtrl.dispose();
     _transformController.dispose();
     player.dispose();
     super.dispose();
@@ -514,93 +526,29 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     await player.play();
   }
 
-  void _toggleOrientation() {
-    setState(() {
-      isLandscape = !isLandscape;
-      if (isLandscape) {
-        SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
-      } else {
-        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      }
-    });
-  }
-
-  void _openAudioLanguageSheet() {
+  void _showTrackSheet(bool isAudio) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF161722),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: const [
-                Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
-                SizedBox(width: 10),
-                Text("Select Audio Language", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-              ],
-            ),
-            const SizedBox(height: 14),
-            if (currentTracks.audio.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text("No extra audio tracks found in this video.", style: TextStyle(color: Colors.white54)),
-              )
-            else
-              ...currentTracks.audio.map((track) {
-                final isSelected = player.state.track.audio == track;
-                final langName = track.title ?? track.language ?? "Track ${track.id}";
-                return ListTile(
-                  leading: Icon(Icons.language_rounded, color: isSelected ? const Color(0xFF00E676) : Colors.white60),
-                  title: Text(langName, style: TextStyle(color: isSelected ? const Color(0xFF00E676) : Colors.white, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                  trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: Color(0xFF00E676)) : null,
-                  onTap: () {
-                    player.setAudioTrack(track);
-                    Navigator.pop(ctx);
-                  },
-                );
-              }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openSubtitleSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF161722),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Subtitles", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-            const Divider(color: Colors.white12),
-            ListTile(
-              leading: const Icon(Icons.subtitles_off_rounded, color: Colors.redAccent),
-              title: const Text("Turn OFF Subtitles", style: TextStyle(color: Colors.white)),
-              trailing: player.state.track.subtitle == SubtitleTrack.no() ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () {
-                player.setSubtitleTrack(SubtitleTrack.no());
-                Navigator.pop(ctx);
-              },
-            ),
-            ...currentTracks.subtitle.map((track) {
-              if (track == SubtitleTrack.no()) return const SizedBox.shrink();
-              final isSelected = player.state.track.subtitle == track;
-              final subTitle = track.title ?? track.language ?? "Subtitle ${track.id}";
+            Text(isAudio ? "Audio Language" : "Subtitles", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            if (!isAudio)
+              ListTile(
+                title: const Text("Turn OFF Subtitles"),
+                onTap: () { player.setSubtitleTrack(SubtitleTrack.no()); Navigator.pop(ctx); },
+              ),
+            ...(isAudio ? currentTracks.audio : currentTracks.subtitle).map((t) {
+              final title = (t as dynamic).title ?? (t as dynamic).language ?? "Track ${(t as dynamic).id}";
               return ListTile(
-                leading: Icon(Icons.closed_caption_rounded, color: isSelected ? const Color(0xFF00E676) : Colors.white60),
-                title: Text(subTitle, style: TextStyle(color: isSelected ? const Color(0xFF00E676) : Colors.white)),
-                trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: Color(0xFF00E676)) : null,
+                title: Text(title),
                 onTap: () {
-                  player.setSubtitleTrack(track);
+                  if (isAudio) player.setAudioTrack(t as AudioTrack); else player.setSubtitleTrack(t as SubtitleTrack);
                   Navigator.pop(ctx);
                 },
               );
@@ -611,105 +559,70 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     );
   }
 
-  String _formatDuration(Duration d) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    final m = two(d.inMinutes.remainder(60));
-    final s = two(d.inSeconds.remainder(60));
-    return "$m:$s";
-  }
-
-  Widget _buildAudioMusicPlayerView(MediaFile item) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AnimatedBuilder(
-            animation: _flowAnimCtrl,
-            builder: (context, child) {
-              return Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 280,
-                    height: 280,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [const Color(0xFF00E676).withOpacity(0.35), Colors.transparent],
-                      ),
-                    ),
-                  ),
-                  AnimatedBuilder(
-                    animation: _discAnimCtrl,
-                    builder: (context, discChild) {
-                      return Transform.rotate(
-                        angle: _discAnimCtrl.value * 2 * math.pi,
-                        child: discChild,
-                      );
-                    },
-                    child: Container(
-                      width: 240,
-                      height: 240,
-                      decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF14151C)),
-                      child: Center(
-                        child: Container(
-                          width: 90,
-                          height: 90,
-                          decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF00E676)),
-                          child: const Icon(Icons.music_note_rounded, size: 48, color: Colors.black),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 30),
-          Text(item.title, textAlign: TextAlign.center, maxLines: 2, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-          const SizedBox(height: 6),
-          Text(item.formattedSize, style: const TextStyle(color: Colors.white38, fontSize: 13)),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final currentItem = widget.playlist[currentIndex];
-    final remainingDuration = duration - position;
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenW = MediaQuery.of(context).size.width;
+
+    if (isFloatingPip) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            Positioned(
+              left: pipOffset.dx,
+              top: pipOffset.dy,
+              child: GestureDetector(
+                onPanUpdate: (d) => setState(() => pipOffset += d.delta),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 200,
+                    height: 115,
+                    color: Colors.black,
+                    child: Stack(
+                      children: [
+                        Video(controller: controller, controls: NoVideoControls),
+                        Positioned(
+                          right: 4, top: 4,
+                          child: GestureDetector(
+                            onTap: () => setState(() => isFloatingPip = false),
+                            child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 20),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTap: () {
-          if (!isLocked) setState(() => controlsVisible = !controlsVisible);
-        },
-        onVerticalDragUpdate: isLocked
-            ? null
-            : (details) {
-                final isLeftHalf = details.globalPosition.dx < (screenWidth / 2);
-                final delta = -details.primaryDelta! / 200.0;
-                setState(() {
-                  showGestureIndicator = true;
-                  if (isLeftHalf) {
-                    gestureType = "brightness";
-                    brightness = (brightness + delta).clamp(0.05, 1.0);
-                    gestureValue = (brightness * 100);
-                  } else {
-                    gestureType = "volume";
-                    volume = (volume + delta).clamp(0.0, 1.0);
-                    gestureValue = (volume * 100);
-                    player.setVolume(gestureValue);
-                  }
-                });
-              },
-        onVerticalDragEnd: (_) {
-          Future.delayed(const Duration(milliseconds: 900), () {
-            if (mounted) setState(() => showGestureIndicator = false);
+        onTap: () { if (!isLocked) setState(() => controlsVisible = !controlsVisible); },
+        onVerticalDragUpdate: isLocked ? null : (details) {
+          final isLeft = details.globalPosition.dx < (screenW / 2);
+          final delta = -details.primaryDelta! / 200.0;
+          setState(() {
+            showGesture = true;
+            if (isLeft) {
+              gestureName = "Brightness";
+              brightness = (brightness + delta).clamp(0.05, 1.0);
+              gestureVal = brightness * 100;
+            } else {
+              gestureName = "Volume";
+              volume = (volume + delta).clamp(0.0, 1.0);
+              gestureVal = volume * 100;
+              player.setVolume(gestureVal);
+            }
           });
         },
+        onVerticalDragEnd: (_) => Future.delayed(const Duration(milliseconds: 700), () => setState(() => showGesture = false)),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -718,139 +631,113 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                 transformationController: _transformController,
                 minScale: 1.0,
                 maxScale: 3.5,
-                scaleEnabled: !isLocked,
-                child: SizedBox.expand(
-                  child: Video(controller: controller, controls: NoVideoControls, fit: BoxFit.contain),
-                ),
+                child: SizedBox.expand(child: Video(controller: controller, controls: NoVideoControls)),
               )
             else
-              _buildAudioMusicPlayerView(currentItem),
+              Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 180,
+                      height: 180,
+                      decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF1E1F2B)),
+                      child: const Icon(Icons.music_note_rounded, color: Color(0xFF00E676), size: 70),
+                    ),
+                    const SizedBox(height: 20),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(currentItem.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              ),
 
-            IgnorePointer(
-              child: Container(color: Colors.black.withOpacity((1.0 - brightness) * 0.75)),
-            ),
-
-            if (showGestureIndicator && !isLocked)
+            if (showGesture)
               Center(
                 child: Container(
-                  width: 130,
-                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFF00E676), width: 1.2),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(gestureType == "brightness" ? Icons.brightness_6_rounded : Icons.volume_up_rounded, color: const Color(0xFF00E676), size: 34),
-                      const SizedBox(height: 10),
-                      Text("${gestureValue.toInt()}%", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
-                    ],
-                  ),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+                  child: Text("$gestureName: ${gestureVal.toInt()}%", style: const TextStyle(fontSize: 16, color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
                 ),
               ),
 
-            // Top Bar
-            if (controlsVisible && !isLocked)
+            if (controlsVisible) ...[
+              Positioned(
+                left: 12, top: 120,
+                child: Column(
+                  children: [
+                    IconButton(
+                      icon: Icon(isMuted ? Icons.volume_off : Icons.volume_up, color: Colors.white),
+                      onPressed: () { setState(() => isMuted = !isMuted); player.setVolume(isMuted ? 0 : 100); },
+                    ),
+                    IconButton(
+                      icon: Icon(isLocked ? Icons.lock : Icons.lock_open, color: isLocked ? Colors.red : Colors.white),
+                      onPressed: () => setState(() => isLocked = !isLocked),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                right: 12, top: 120,
+                child: IconButton(
+                  icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
+                  onPressed: () => setState(() => isFloatingPip = true),
+                ),
+              ),
+
               Positioned(
                 top: 0, left: 0, right: 0,
-                child: Container(
-                  padding: const EdgeInsets.only(top: 36, left: 10, right: 10, bottom: 8),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(colors: [Colors.black87, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      Expanded(
-                        child: Text(currentItem.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      ),
-                      if (currentItem.isVideo)
-                        IconButton(
-                          icon: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
-                          tooltip: 'Change Audio Language',
-                          onPressed: _openAudioLanguageSheet,
-                        ),
-                      if (currentItem.isVideo)
-                        IconButton(
-                          icon: const Icon(Icons.subtitles_rounded, color: Color(0xFF00E676)),
-                          tooltip: 'Subtitles',
-                          onPressed: _openSubtitleSheet,
-                        ),
-                      IconButton(
-                        icon: Icon(isLandscape ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, color: Colors.white),
-                        tooltip: 'Rotate Screen',
-                        onPressed: _toggleOrientation,
-                      ),
-                    ],
-                  ),
+                child: AppBar(
+                  backgroundColor: Colors.black54,
+                  elevation: 0,
+                  leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+                  title: Text(currentItem.title, style: const TextStyle(fontSize: 14)),
+                  actions: [
+                    if (currentItem.isVideo) ...[
+                      IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio Track", onPressed: () => _showTrackSheet(true)),
+                      IconButton(icon: const Icon(Icons.subtitles), tooltip: "Subtitles", onPressed: () => _showTrackSheet(false)),
+                    ]
+                  ],
                 ),
               ),
 
-            // Bottom Bar
-            if (controlsVisible && !isLocked)
               Positioned(
                 bottom: 0, left: 0, right: 0,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(colors: [Colors.transparent, Colors.black87], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-                  ),
+                  color: Colors.black54,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Row(
-                        children: [
-                          Text(_formatDuration(position), style: const TextStyle(fontSize: 11, color: Colors.white70)),
-                          Expanded(
-                            child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                activeTrackColor: const Color(0xFF00E676),
-                                inactiveTrackColor: Colors.white24,
-                                thumbColor: Colors.white,
-                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4.5),
-                                trackHeight: 2.2,
-                              ),
-                              child: Slider(
-                                value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
-                                max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
-                                onChanged: (val) => player.seek(Duration(milliseconds: val.toInt())),
-                              ),
-                            ),
-                          ),
-                          Text("-${_formatDuration(remainingDuration)}", style: const TextStyle(fontSize: 11, color: Colors.white70)),
-                        ],
+                      Slider(
+                        value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
+                        max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
+                        activeColor: const Color(0xFF00E676),
+                        onChanged: (v) => player.seek(Duration(milliseconds: v.toInt())),
                       ),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           IconButton(
-                            iconSize: 34,
-                            icon: Icon(isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded, color: Colors.white),
+                            icon: const Icon(Icons.skip_previous, size: 28),
+                            onPressed: () { if (currentIndex > 0) _openMedia(currentIndex - 1); },
+                          ),
+                          IconButton(
+                            icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 40, color: const Color(0xFF00E676)),
                             onPressed: () => player.playOrPause(),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 28),
-                            onPressed: () {
-                              if (currentIndex > 0) _openMedia(currentIndex - 1);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 28),
-                            onPressed: () {
-                              if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1);
-                            },
+                            icon: const Icon(Icons.skip_next, size: 28),
+                            onPressed: () { if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1); },
                           ),
                         ],
-                      ),
+                      )
                     ],
                   ),
                 ),
               ),
+            ]
           ],
         ),
       ),
