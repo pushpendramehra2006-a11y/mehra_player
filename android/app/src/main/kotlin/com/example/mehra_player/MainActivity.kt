@@ -12,15 +12,16 @@ import android.media.ThumbnailUtils
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Rational
-import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.mehra.player/native"
     private var methodChannel: MethodChannel? = null
+    private val executor = Executors.newFixedThreadPool(2)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -31,17 +32,21 @@ class MainActivity: FlutterActivity() {
                 "getThumbnail" -> {
                     val path = call.argument<String>("path")
                     if (path != null) {
-                        try {
-                            val bitmap = ThumbnailUtils.createVideoThumbnail(path, MediaStore.Images.Thumbnails.MINI_KIND)
-                            if (bitmap != null) {
-                                val stream = ByteArrayOutputStream()
-                                bitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
-                                result.success(stream.toByteArray())
-                            } else {
-                                result.success(null)
+                        executor.execute {
+                            try {
+                                val bitmap = ThumbnailUtils.createVideoThumbnail(path, MediaStore.Images.Thumbnails.MINI_KIND)
+                                if (bitmap != null) {
+                                    val stream = ByteArrayOutputStream()
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 50, stream)
+                                    val bytes = stream.toByteArray()
+                                    bitmap.recycle()
+                                    runOnUiThread { result.success(bytes) }
+                                } else {
+                                    runOnUiThread { result.success(null) }
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.success(null) }
                             }
-                        } catch (e: Exception) {
-                            result.success(null)
                         }
                     } else {
                         result.success(null)
@@ -139,8 +144,6 @@ class MainActivity: FlutterActivity() {
             }
 
             manager.notify(101, builder.build())
-        } catch (e: Exception) {
-            // Keep app safe from notification crashes
-        }
+        } catch (_: Exception) {}
     }
 }
