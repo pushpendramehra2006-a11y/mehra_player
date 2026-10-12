@@ -76,7 +76,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
   bool isScanning = false;
-  String sortBy = "time";
+  String sortOption = "time_desc"; // Default: Newest first
 
   @override
   void initState() {
@@ -218,15 +218,31 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
   void _applySorting() {
     setState(() {
-      if (sortBy == "name") {
-        videoList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-        audioList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-      } else if (sortBy == "size") {
-        videoList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
-        audioList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
-      } else if (sortBy == "time") {
-        videoList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
-        audioList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
+      switch (sortOption) {
+        case "time_desc":
+          videoList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
+          audioList.sort((a, b) => b.modifiedTime.compareTo(a.modifiedTime));
+          break;
+        case "time_asc":
+          videoList.sort((a, b) => a.modifiedTime.compareTo(b.modifiedTime));
+          audioList.sort((a, b) => a.modifiedTime.compareTo(b.modifiedTime));
+          break;
+        case "name_asc":
+          videoList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+          audioList.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+          break;
+        case "name_desc":
+          videoList.sort((a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()));
+          audioList.sort((a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()));
+          break;
+        case "size_desc":
+          videoList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
+          audioList.sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
+          break;
+        case "size_asc":
+          videoList.sort((a, b) => a.sizeBytes.compareTo(b.sizeBytes));
+          audioList.sort((a, b) => a.sizeBytes.compareTo(b.sizeBytes));
+          break;
       }
     });
   }
@@ -240,25 +256,51 @@ class _MainTabScreenState extends State<MainTabScreen> {
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Sort Files", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Row(
+              children: const [
+                Icon(Icons.sort_rounded, color: Color(0xFF00E676)),
+                SizedBox(width: 8),
+                Text("Sort By", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 12),
             ListTile(
               leading: const Icon(Icons.access_time_rounded),
-              title: const Text("Date / Time (Newest First)"),
-              trailing: sortBy == "time" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () { setState(() => sortBy = "time"); _applySorting(); Navigator.pop(ctx); },
+              title: const Text("Date Modified (Newest First)"),
+              trailing: sortOption == "time_desc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "time_desc"); _applySorting(); Navigator.pop(ctx); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.history_rounded),
+              title: const Text("Date Modified (Oldest First)"),
+              trailing: sortOption == "time_asc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "time_asc"); _applySorting(); Navigator.pop(ctx); },
             ),
             ListTile(
               leading: const Icon(Icons.sort_by_alpha_rounded),
               title: const Text("Name (A - Z)"),
-              trailing: sortBy == "name" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () { setState(() => sortBy = "name"); _applySorting(); Navigator.pop(ctx); },
+              trailing: sortOption == "name_asc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "name_asc"); _applySorting(); Navigator.pop(ctx); },
             ),
             ListTile(
-              leading: const Icon(Icons.data_usage_rounded),
+              leading: const Icon(Icons.text_rotate_vertical_rounded),
+              title: const Text("Name (Z - A)"),
+              trailing: sortOption == "name_desc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "name_desc"); _applySorting(); Navigator.pop(ctx); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_downward_rounded),
               title: const Text("Size (Large to Small)"),
-              trailing: sortBy == "size" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
-              onTap: () { setState(() => sortBy = "size"); _applySorting(); Navigator.pop(ctx); },
+              trailing: sortOption == "size_desc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "size_desc"); _applySorting(); Navigator.pop(ctx); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_upward_rounded),
+              title: const Text("Size (Small to Large)"),
+              trailing: sortOption == "size_asc" ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+              onTap: () { setState(() => sortOption = "size_asc"); _applySorting(); Navigator.pop(ctx); },
             ),
           ],
         ),
@@ -350,7 +392,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
       final cleanName = item.title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '');
       final outPath = "${outDir.path}/${cleanName}_audio.mp3";
 
-      // Native copy and MP3 extraction
       final srcFile = File(item.path);
       await srcFile.copy(outPath);
 
@@ -637,12 +678,13 @@ class _MainTabScreenState extends State<MainTabScreen> {
         backgroundColor: const Color(0xFF0C0D11),
         title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
         actions: [
-          IconButton(icon: const Icon(Icons.sort_rounded), onPressed: _showSortSheet),
-          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: _showDownloaderDialog),
+          IconButton(icon: const Icon(Icons.sort_rounded), tooltip: "Sort Files", onPressed: _showSortSheet),
+          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), tooltip: "Mehra Downloader", onPressed: _showDownloaderDialog),
           IconButton(
             icon: isScanning
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00E676)))
                 : const Icon(Icons.refresh_rounded),
+            tooltip: "Refresh Scan",
             onPressed: isScanning ? null : _startBackgroundScan,
           ),
         ],
