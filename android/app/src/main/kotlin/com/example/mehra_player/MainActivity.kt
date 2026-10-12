@@ -1,5 +1,6 @@
 ﻿package com.example.mehra_player
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -12,7 +13,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Rational
 import android.view.WindowManager
-import androidx.core.app.NotificationCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -88,16 +88,23 @@ class MainActivity: FlutterActivity() {
             manager.createNotificationChannel(chan)
         }
         val intent = Intent(this, MainActivity::class.java)
-        val pIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        val pIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        )
 
-        val builder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, channelId)
+        } else {
+            Notification.Builder(this)
+        }
+
+        builder.setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("Mehra Player")
             .setContentText(title)
             .setContentIntent(pIntent)
             .setOngoing(isPlaying)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+
         manager.notify(1001, builder.build())
     }
 }
