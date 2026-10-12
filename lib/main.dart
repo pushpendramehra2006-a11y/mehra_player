@@ -79,7 +79,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
   @override
   void initState() {
     super.initState();
-    // App turant load hogi, black screen zero percent
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requestAndScan();
     });
@@ -91,26 +90,27 @@ class _MainTabScreenState extends State<MainTabScreen> {
         Permission.storage,
         Permission.videos,
         Permission.audio,
+        Permission.notification,
         Permission.manageExternalStorage,
       ].request();
     }
     _startBackgroundScan();
   }
 
-  // Background Isolate scan taaki UI thread 1 ms ke liye bhi freeze na ho
   Future<void> _startBackgroundScan() async {
     if (isScanning) return;
     setState(() => isScanning = true);
 
     try {
       final results = await Isolate.run(() {
-        List<Map<String, dynamic>> foundVideos = [];
-        List<Map<String, dynamic>> foundAudios = [];
+        List<Map<String, dynamic>> vids = [];
+        List<Map<String, dynamic>> auds = [];
 
         List<Directory> targetDirs = [];
         if (Platform.isAndroid) {
           final rootDirs = [
             '/storage/emulated/0/DCIM',
+            '/storage/emulated/0/DCIM/Camera',
             '/storage/emulated/0/Movies',
             '/storage/emulated/0/Download',
             '/storage/emulated/0/WhatsApp/Media',
@@ -144,29 +144,27 @@ class _MainTabScreenState extends State<MainTabScreen> {
                 final isAud = p.endsWith('.mp3') || p.endsWith('.m4a') || p.endsWith('.wav') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac');
 
                 if (isVid) {
-                  foundVideos.add({
+                  vids.add({
                     'path': e.path,
                     'title': name,
                     'size': stat.size,
                     'folder': folder,
                     'time': stat.modified.millisecondsSinceEpoch,
-                    'isVideo': true
                   });
                 } else if (isAud) {
-                  foundAudios.add({
+                  auds.add({
                     'path': e.path,
                     'title': name,
                     'size': stat.size,
                     'folder': folder,
                     'time': stat.modified.millisecondsSinceEpoch,
-                    'isVideo': false
                   });
                 }
               }
             }
           } catch (_) {}
         }
-        return {'vids': foundVideos, 'auds': foundAudios};
+        return {'vids': vids, 'auds': auds};
       });
 
       List<MediaFile> mappedVids = (results['vids'] as List).map((m) => MediaFile(
@@ -194,19 +192,18 @@ class _MainTabScreenState extends State<MainTabScreen> {
           isScanning = false;
         });
         _applySorting();
-        _loadThumbnailsOneByOne();
+        _generateRealThumbnails();
       }
     } catch (_) {
       if (mounted) setState(() => isScanning = false);
     }
   }
 
-  // Crash-Proof Thumbnail Extraction
-  Future<void> _loadThumbnailsOneByOne() async {
-    final thumbDir = Directory("${Directory.systemTemp.path}/player_thumbs");
+  // Real fast thumbnail generation with disk cache
+  Future<void> _generateRealThumbnails() async {
+    final thumbDir = Directory("${Directory.systemTemp.path}/app_thumbnails");
     if (!await thumbDir.exists()) await thumbDir.create(recursive: true);
 
-    // Pehle jo thumbs already cached hain unhe turant bind karo
     for (var v in videoList) {
       final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
       if (File(cachePath).existsSync()) {
@@ -214,18 +211,17 @@ class _MainTabScreenState extends State<MainTabScreen> {
       }
     }
 
-    // Naye thumbs ke liye single dedicated background worker
     Player? worker;
     try {
       worker = Player();
-      for (var v in videoList.where((e) => e.thumbPath == null).take(30)) {
+      for (var v in videoList.where((e) => e.thumbPath == null).take(35)) {
         if (!mounted) break;
         final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
         final file = File(cachePath);
 
         try {
           await worker.open(Media(v.path), play: false);
-          await Future.delayed(const Duration(milliseconds: 150));
+          await Future.delayed(const Duration(milliseconds: 120));
           final Uint8List? frame = await worker.screenshot(format: 'image/jpeg');
           if (frame != null && frame.isNotEmpty) {
             await file.writeAsBytes(frame, flush: true);
@@ -263,7 +259,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Sort Videos & Music", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text("Sort Files", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ListTile(
               leading: const Icon(Icons.access_time_rounded),
               title: const Text("Date / Time (Newest First)"),
@@ -291,9 +287,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
   void _showDownloaderDialog() {
     final urlCtrl = TextEditingController();
     String mode = "video";
-    List<String> vidOpts = ["Auto (Best Available)", "High (1080p/720p)", "Fast (480p/360p)", "Direct Stream / ZIP / Torrent"];
-    List<String> audOpts = ["Original MP3", "8D Audio Boost", "Lofi Chill Bass"];
-    String selVid = "Auto (Best Available)";
+    List<String> vidOpts = ["Auto (Best)", "1080p High", "720p Med", "480p Low", "ZIP / Torrent / Direct"];
+    List<String> audOpts = ["Original MP3", "8D Audio Boost", "16D Spatial", "Dolby Atmos Bass", "Lofi Chill"];
+    String selVid = "Auto (Best)";
     String selAud = "Original MP3";
     bool downloading = false;
     double progress = 0.0;
@@ -348,6 +344,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                Text(mode == "video" ? "Video Quality:" : "Audio Effect Mode:", style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
@@ -386,7 +384,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                       if (u.isEmpty || !u.startsWith("http")) return;
                       setDState(() {
                         downloading = true;
-                        status = "Connecting stream...";
+                        status = "Downloading stream...";
                       });
                       try {
                         final isV = mode == "video";
@@ -425,11 +423,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
                       } catch (_) {
                         setDState(() {
                           downloading = false;
-                          status = "Error resolving link.";
+                          status = "Download error.";
                         });
                       }
                     },
-              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text("Start Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -493,8 +491,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
         return ListTile(
           onTap: () => _openPlayer(videoList, idx),
           leading: Container(
-            width: 85,
-            height: 52,
+            width: 90,
+            height: 54,
             decoration: BoxDecoration(
               color: const Color(0xFF1E1F2B),
               borderRadius: BorderRadius.circular(6),
@@ -503,7 +501,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   : null,
             ),
             child: item.thumbPath == null
-                ? const Icon(Icons.play_circle_outline, color: Colors.white38)
+                ? const Icon(Icons.movie_filter_rounded, color: Colors.white38)
                 : null,
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
@@ -564,6 +562,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   bool isMuted = false;
   bool isLand = false;
   double speed = 1.0;
+  String currentAudioMode = "Standard Stereo";
+
   bool isPip = false;
   Offset pipOff = const Offset(20, 100);
 
@@ -581,7 +581,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
-    player.stream.playing.listen((p) { if (mounted) setState(() => isPlaying = p); });
+    player.stream.playing.listen((p) {
+      if (mounted) setState(() => isPlaying = p);
+      _updateSystemNotification();
+    });
     player.stream.position.listen((p) { if (mounted) setState(() => pos = p); });
     player.stream.duration.listen((d) { if (mounted) setState(() => dur = d); });
     player.stream.tracks.listen((t) { if (mounted) setState(() => tracks = t); });
@@ -589,10 +592,22 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     _playIndex(currentIndex);
   }
 
+  // System notification for background music playback
+  void _updateSystemNotification() {
+    final cur = widget.playlist[currentIndex];
+    // Native method call platform channel trigger for Android Notification bar
+    const channel = MethodChannel('com.mehra.player/media');
+    channel.invokeMethod('showNotification', {
+      'title': cur.title,
+      'isPlaying': isPlaying,
+      'isVideo': cur.isVideo,
+    }).catchError((_) {});
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused && isPlaying) {
-      player.play(); // Background continuous play
+      player.play(); // Background continuous playback
     }
   }
 
@@ -615,6 +630,54 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     setState(() => currentIndex = i);
     await player.open(Media(widget.playlist[i].path));
     await player.play();
+    _applyAudioMode(currentAudioMode);
+    _updateSystemNotification();
+  }
+
+  // Live 8D / 16D / Dolby Atmos / Lofi DSP Sound Engine
+  void _applyAudioMode(String mode) {
+    setState(() => currentAudioMode = mode);
+    if (mode == "8D Audio Surround") {
+      player.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
+    } else if (mode == "16D Audio Spatial") {
+      player.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
+    } else if (mode == "Dolby Atmos Bass") {
+      player.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
+    } else if (mode == "Lofi Chill Bass") {
+      player.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
+    } else {
+      player.setProperty('af', ''); // Reset stereo
+    }
+  }
+
+  void _showAudioEffectsSheet() {
+    final effects = ["Standard Stereo", "8D Audio Surround", "16D Audio Spatial", "Dolby Atmos Bass", "Lofi Chill Bass"];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Audio Enhancement / Equalizer", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            ...effects.map((e) {
+              final isSel = currentAudioMode == e;
+              return ListTile(
+                title: Text(e),
+                trailing: isSel ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
+                onTap: () {
+                  _applyAudioMode(e);
+                  Navigator.pop(ctx);
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
   }
 
   void _toggleRotation() {
@@ -694,6 +757,18 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     );
   }
 
+  // Adjust true window brightness on phone hardware
+  void _setHardwareBrightness(double delta) {
+    setState(() {
+      bright = (bright + delta).clamp(0.01, 1.0);
+      hudName = "Screen Brightness";
+      hudVal = bright * 100;
+    });
+    // Set actual screen window brightness via native platform channel
+    const channel = MethodChannel('com.mehra.player/brightness');
+    channel.invokeMethod('setBrightness', {'brightness': bright}).catchError((_) {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final cur = widget.playlist[currentIndex];
@@ -712,12 +787,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    width: 210,
-                    height: 120,
+                    width: 220,
+                    height: 125,
                     color: Colors.black,
                     child: Stack(
                       children: [
-                        Video(controller: controller, controls: NoVideoControls),
+                        cur.isVideo
+                            ? SizedBox.expand(child: Video(controller: controller, controls: NoVideoControls))
+                            : Container(
+                                color: const Color(0xFF161720),
+                                child: const Center(child: Icon(Icons.music_note, color: Color(0xFF00E676), size: 40)),
+                              ),
                         Positioned(
                           right: 4, top: 4,
                           child: GestureDetector(
@@ -743,19 +823,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
         onVerticalDragUpdate: isLocked ? null : (details) {
           final isLeft = details.globalPosition.dx < (screenW / 2);
           final delta = -details.primaryDelta! / 200.0;
-          setState(() {
-            showHud = true;
-            if (isLeft) {
-              hudName = "Brightness";
-              bright = (bright + delta).clamp(0.05, 1.0);
-              hudVal = bright * 100;
-            } else {
+          setState(() => showHud = true);
+          if (isLeft) {
+            _setHardwareBrightness(delta);
+          } else {
+            setState(() {
               hudName = "Volume";
               vol = (vol + delta).clamp(0.0, 1.0);
               hudVal = vol * 100;
               player.setVolume(hudVal);
-            }
-          });
+            });
+          }
         },
         onVerticalDragEnd: (_) => Future.delayed(const Duration(milliseconds: 600), () => setState(() => showHud = false)),
         child: Stack(
@@ -785,6 +863,11 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Text(cur.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                     ),
+                    const SizedBox(height: 8),
+                    Chip(
+                      label: Text(currentAudioMode, style: const TextStyle(color: Color(0xFF00E676), fontSize: 11)),
+                      backgroundColor: const Color(0xFF161722),
+                    )
                   ],
                 ),
               ),
@@ -810,7 +893,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
             if (controls && !isLocked) ...[
               // Left control buttons
               Positioned(
-                left: 10, top: 110,
+                left: 10, top: 100,
                 child: Column(
                   children: [
                     IconButton(
@@ -829,12 +912,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                       icon: const Icon(Icons.speed, color: Colors.white),
                       onPressed: _showSpeedSheet,
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.graphic_eq, color: Color(0xFF00E676)),
+                      tooltip: "8D/Dolby Atmos",
+                      onPressed: _showAudioEffectsSheet,
+                    ),
                   ],
                 ),
               ),
               // PiP Button
               Positioned(
-                right: 10, top: 110,
+                right: 10, top: 100,
                 child: IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
                   onPressed: () => setState(() => isPip = true),
@@ -851,7 +939,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   title: Text(cur.title, style: const TextStyle(fontSize: 13.5)),
                   actions: [
                     if (cur.isVideo) ...[
-                      IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio", onPressed: () => _showTrackSheet(true)),
+                      IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio Track", onPressed: () => _showTrackSheet(true)),
                       IconButton(icon: const Icon(Icons.subtitles), tooltip: "Subtitles", onPressed: () => _showTrackSheet(false)),
                     ]
                   ],
