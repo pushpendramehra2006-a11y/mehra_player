@@ -928,6 +928,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
               ),
 
             if (controls && !isLocked) ...[
+              // Left control buttons
               Positioned(
                 left: 10, top: 90,
                 child: Column(
@@ -965,6 +966,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   ],
                 ),
               ),
+              // PiP Button (Native Android PiP)
               Positioned(
                 right: 10, top: 90,
                 child: IconButton(
@@ -972,6 +974,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   onPressed: _triggerNativePip,
                 ),
               ),
+
+              // Top Bar with Title and 3-Dot Overflow Menu
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: AppBar(
@@ -983,10 +987,90 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                     if (cur.isVideo) ...[
                       IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio Track", onPressed: () => _showTrackSheet(true)),
                       IconButton(icon: const Icon(Icons.subtitles), tooltip: "Subtitles", onPressed: () => _showTrackSheet(false)),
-                    ]
+                    ],
+                    // 3-DOT MENU BUTTON
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                      color: const Color(0xFF161722),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      onSelected: (val) {
+                        if (val == "audio_track") _showTrackSheet(true);
+                        else if (val == "subtitles") _showTrackSheet(false);
+                        else if (val == "color_mode") _showColorModesSheet();
+                        else if (val == "eq_effects") _showAudioEffectsSheet();
+                        else if (val == "speed") _showSpeedSheet();
+                        else if (val == "pip") _triggerNativePip();
+                      },
+                      itemBuilder: (ctx) => [
+                        if (cur.isVideo) ...[
+                          const PopupMenuItem(
+                            value: "audio_track",
+                            child: Row(
+                              children: [
+                                Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676), size: 20),
+                                SizedBox(width: 10),
+                                Text("Audio Track (Hindi/Eng)"),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: "subtitles",
+                            child: Row(
+                              children: [
+                                Icon(Icons.subtitles_rounded, color: Color(0xFF00E676), size: 20),
+                                SizedBox(width: 10),
+                                Text("Subtitles / Captions"),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: "color_mode",
+                            child: Row(
+                              children: [
+                                Icon(Icons.palette_rounded, color: Color(0xFF00E676), size: 20),
+                                SizedBox(width: 10),
+                                Text("Color & HDR Booster"),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const PopupMenuItem(
+                          value: "eq_effects",
+                          child: Row(
+                            children: [
+                              Icon(Icons.graphic_eq_rounded, color: Color(0xFF00E676), size: 20),
+                              SizedBox(width: 10),
+                              Text("Audio Equalizer (8D/Dolby)"),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: "speed",
+                          child: Row(
+                            children: [
+                              Icon(Icons.speed_rounded, color: Color(0xFF00E676), size: 20),
+                              SizedBox(width: 10),
+                              Text("Playback Speed"),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: "pip",
+                          child: Row(
+                            children: [
+                              Icon(Icons.picture_in_picture_alt_rounded, color: Color(0xFF00E676), size: 20),
+                              SizedBox(width: 10),
+                              Text("Picture in Picture (PiP)"),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
+
+              // Bottom Bar
               Positioned(
                 bottom: 0, left: 0, right: 0,
                 child: Container(
