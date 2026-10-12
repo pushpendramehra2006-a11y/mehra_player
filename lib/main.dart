@@ -1,6 +1,7 @@
 ﻿import 'dart:io';
 import 'dart:typed_data';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -520,6 +521,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
     bool downloading = false;
     double progress = 0.0;
     String status = "";
+    String sizeText = "0 MB / 0 MB";
+    String speedText = "0 KB/s";
 
     showDialog(
       context: context,
@@ -588,13 +591,39 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   }).toList(),
                 ),
                 if (downloading) ...[
-                  const SizedBox(height: 14),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(value: progress > 0 ? progress : null, color: const Color(0xFF00E676)),
+                  const SizedBox(height: 16),
+                  // Animated Dynamic Network Graph Widget
+                  Container(
+                    height: 52,
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black38,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF00E676).withOpacity(0.25)),
+                    ),
+                    child: DownloadGraphAnimation(isDownloading: downloading),
                   ),
-                  const SizedBox(height: 6),
-                  Text(status, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: LinearProgressIndicator(
+                      value: progress > 0 ? progress : null,
+                      color: const Color(0xFF00E676),
+                      backgroundColor: Colors.white12,
+                      minHeight: 8,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(sizeText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                      Text(speedText, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF00E676))),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(status, style: const TextStyle(fontSize: 11, color: Colors.white54)),
                 ]
               ],
             ),
@@ -610,7 +639,8 @@ class _MainTabScreenState extends State<MainTabScreen> {
                       if (u.isEmpty || !u.startsWith("http")) return;
                       setDState(() {
                         downloading = true;
-                        status = "Downloading stream...";
+                        status = "Connecting to source...";
+                        speedText = "Calculating...";
                       });
                       try {
                         final isV = mode == "video";
@@ -630,17 +660,42 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         int got = 0;
                         final sink = File(savePath).openWrite();
 
+                        DateTime lastTime = DateTime.now();
+                        int lastGot = 0;
+
                         await res.stream.listen((chunk) {
                           sink.add(chunk);
                           got += chunk.length;
-                          setDState(() {
-                            if (total > 0) {
-                              progress = (got / total).clamp(0.0, 1.0);
-                              status = "Downloading: ${(progress * 100).toInt()}%";
+
+                          final now = DateTime.now();
+                          final diff = now.difference(lastTime).inMilliseconds;
+
+                          if (diff >= 300) {
+                            final bytesPerSec = ((got - lastGot) / (diff / 1000.0));
+                            String spd = "";
+                            if (bytesPerSec > 1024 * 1024) {
+                              spd = "${(bytesPerSec / (1024 * 1024)).toStringAsFixed(2)} MB/s";
                             } else {
-                              status = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB downloaded";
+                              spd = "${(bytesPerSec / 1024).toStringAsFixed(1)} KB/s";
                             }
-                          });
+
+                            final gotMb = (got / (1024 * 1024)).toStringAsFixed(1);
+                            final totalMb = (total / (1024 * 1024)).toStringAsFixed(1);
+
+                            setDState(() {
+                              if (total > 0) {
+                                progress = (got / total).clamp(0.0, 1.0);
+                                sizeText = "$gotMb MB / $totalMb MB (${(progress * 100).toInt()}%)";
+                              } else {
+                                sizeText = "$gotMb MB downloaded";
+                              }
+                              speedText = spd;
+                              status = "Downloading file...";
+                            });
+
+                            lastTime = now;
+                            lastGot = got;
+                          }
                         }).asFuture();
 
                         await sink.close();
@@ -649,7 +704,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                       } catch (_) {
                         setDState(() {
                           downloading = false;
-                          status = "Download error.";
+                          status = "Download error. Check URL.";
                         });
                       }
                     },
@@ -773,6 +828,57 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 }
 
+// Live Dynamic Audio/Network Frequency Graph for Mehra Downloader
+class DownloadGraphAnimation extends StatefulWidget {
+  final bool isDownloading;
+  const DownloadGraphAnimation({super.key, required this.isDownloading});
+
+  @override
+  State<DownloadGraphAnimation> createState() => _DownloadGraphAnimationState();
+}
+
+class _DownloadGraphAnimationState extends State<DownloadGraphAnimation> with SingleTickerProviderStateMixin {
+  late AnimationController _animCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animCtrl,
+      builder: (ctx, _) {
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(24, (i) {
+            final t = (_animCtrl.value * 2 * math.pi) + (i * 0.35);
+            final wave = (math.sin(t) + 1.0) / 2.0;
+            final h = (wave * 34.0) + 6.0;
+            return Container(
+              width: 3.5,
+              height: h,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00E676).withOpacity(0.4 + (wave * 0.6)),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
 class PlayitVideoPlayer extends StatefulWidget {
   final List<MediaFile> playlist;
   final int initialIndex;
@@ -814,20 +920,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
-    // 1. Initialize stable hardware-accelerated Player
     player = Player(
       configuration: const PlayerConfiguration(
         pitch: true,
       ),
     );
 
-    // 2. Hardware acceleration without conflicting flags
     dynamic native = player.platform;
     native?.setProperty('hwdec', 'mediacodec');
     native?.setProperty('vo', 'gpu');
     native?.setProperty('video-sync', 'audio');
 
-    // 3. Bind VideoController safely
     if (widget.playlist[currentIndex].isVideo) {
       controller = VideoController(
         player,
@@ -837,7 +940,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
       );
     }
 
-    // 4. Notification method channel listener
     platformChannel.setMethodCallHandler((call) async {
       if (call.method == "onPlayPauseTrigger") {
         player.playOrPause();
@@ -901,7 +1003,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
 
     await player.open(Media(widget.playlist[i].path));
     await player.play();
-    
+
     if (mounted) {
       setState(() => isInitialized = true);
       _applyAudioMode(currentAudioMode);
