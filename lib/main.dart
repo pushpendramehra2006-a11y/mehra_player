@@ -531,7 +531,6 @@ class PlayitVideoPlayer extends StatefulWidget {
 }
 
 class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindingObserver {
-  // Pure zero-lag GPU configuration: Hardware video acceleration & fast buffering
   late final player = Player(
     configuration: const PlayerConfiguration(
       bufferSize: 64 * 1024 * 1024,
@@ -572,11 +571,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
-    // Enable MediaCodec GPU decoding and frame-drop sync
+    // 120 FPS / Adaptive Refresh Rate Motion Smoothing & GPU Hardware Acceleration
     dynamic native = player.platform;
     native?.setProperty('hwdec', 'mediacodec-all');
+    native?.setProperty('video-sync', 'display-resample');
+    native?.setProperty('interpolation', 'yes');
+    native?.setProperty('tscale', 'oversample');
     native?.setProperty('framedrop', 'vo');
-    native?.setProperty('video-sync', 'audio');
 
     player.stream.playing.listen((p) {
       if (mounted) setState(() => isPlaying = p);
@@ -644,22 +645,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     }
   }
 
-  // Pure Hardware GPU Render Properties (Zero CPU load, Zero frame drop)
   void _applyColorMode(String mode) {
     setState(() => currentColorMode = mode);
     dynamic native = player.platform;
-    
-    // Clear CPU software video filter
     native?.setProperty('vf', '');
 
     if (mode == "Pixel Vivid HDR") {
-      // GPU Direct VO Properties for Google Pixel vibrance & contrast
       native?.setProperty('saturation', '30');
       native?.setProperty('contrast', '15');
       native?.setProperty('brightness', '2');
       native?.setProperty('gamma', '3');
     } else if (mode == "Ultra AMOLED") {
-      // Deep blacks and vibrant OLED saturation
       native?.setProperty('saturation', '45');
       native?.setProperty('contrast', '24');
       native?.setProperty('brightness', '0');
@@ -670,7 +666,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
       native?.setProperty('brightness', '1');
       native?.setProperty('gamma', '2');
     } else {
-      // Normal natural defaults
       native?.setProperty('saturation', '0');
       native?.setProperty('contrast', '0');
       native?.setProperty('brightness', '0');
