@@ -8,6 +8,8 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+const platformChannel = MethodChannel('com.mehra.player/native');
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -44,7 +46,7 @@ class MediaFile {
   final bool isVideo;
   final String folderName;
   final DateTime modifiedTime;
-  String? thumbPath;
+  Uint8List? thumbBytes;
 
   MediaFile({
     required this.path,
@@ -53,7 +55,7 @@ class MediaFile {
     required this.isVideo,
     required this.folderName,
     required this.modifiedTime,
-    this.thumbPath,
+    this.thumbBytes,
   });
 
   String get formattedSize {
@@ -192,45 +194,26 @@ class _MainTabScreenState extends State<MainTabScreen> {
           isScanning = false;
         });
         _applySorting();
-        _generateRealThumbnails();
+        _fetchNativeThumbnails();
       }
     } catch (_) {
       if (mounted) setState(() => isScanning = false);
     }
   }
 
-  // Real fast thumbnail generation with disk cache
-  Future<void> _generateRealThumbnails() async {
-    final thumbDir = Directory("${Directory.systemTemp.path}/app_thumbnails");
-    if (!await thumbDir.exists()) await thumbDir.create(recursive: true);
-
+  // Native Android Thumbnail Provider (100% Reliable & Fast)
+  Future<void> _fetchNativeThumbnails() async {
     for (var v in videoList) {
-      final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
-      if (File(cachePath).existsSync()) {
-        if (mounted) setState(() => v.thumbPath = cachePath);
-      }
-    }
-
-    Player? worker;
-    try {
-      worker = Player();
-      for (var v in videoList.where((e) => e.thumbPath == null).take(35)) {
-        if (!mounted) break;
-        final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
-        final file = File(cachePath);
-
-        try {
-          await worker.open(Media(v.path), play: false);
-          await Future.delayed(const Duration(milliseconds: 120));
-          final Uint8List? frame = await worker.screenshot(format: 'image/jpeg');
-          if (frame != null && frame.isNotEmpty) {
-            await file.writeAsBytes(frame, flush: true);
-            if (mounted) setState(() => v.thumbPath = cachePath);
-          }
-        } catch (_) {}
-      }
-    } finally {
-      worker?.dispose();
+      if (!mounted) break;
+      if (v.thumbBytes != null) continue;
+      try {
+        final Uint8List? bytes = await platformChannel.invokeMethod('getThumbnail', {'path': v.path});
+        if (bytes != null && mounted) {
+          setState(() {
+            v.thumbBytes = bytes;
+          });
+        }
+      } catch (_) {}
     }
   }
 
@@ -288,7 +271,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
     final urlCtrl = TextEditingController();
     String mode = "video";
     List<String> vidOpts = ["Auto (Best)", "1080p High", "720p Med", "480p Low", "ZIP / Torrent / Direct"];
-    List<String> audOpts = ["Original MP3", "8D Audio Boost", "16D Spatial", "Dolby Atmos Bass", "Lofi Chill"];
+    List<String> audOpts = ["Original MP3", "8D Audio Surround", "16D Spatial", "Dolby Atmos Bass", "Lofi Chill Bass"];
     String selVid = "Auto (Best)";
     String selAud = "Original MP3";
     bool downloading = false;
@@ -344,7 +327,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(mode == "video" ? "Video Quality:" : "Audio Effect Mode:", style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                Text(mode == "video" ? "Video Quality:" : "Audio Mode:", style: const TextStyle(fontSize: 12, color: Colors.white60)),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
@@ -427,7 +410,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         });
                       }
                     },
-              child: const Text("Start Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -496,11 +479,11 @@ class _MainTabScreenState extends State<MainTabScreen> {
             decoration: BoxDecoration(
               color: const Color(0xFF1E1F2B),
               borderRadius: BorderRadius.circular(6),
-              image: item.thumbPath != null
-                  ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover)
+              image: item.thumbBytes != null
+                  ? DecorationImage(image: MemoryImage(item.thumbBytes!), fit: BoxFit.cover)
                   : null,
             ),
-            child: item.thumbPath == null
+            child: item.thumbBytes == null
                 ? const Icon(Icons.movie_filter_rounded, color: Colors.white38)
                 : null,
           ),
@@ -564,9 +547,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   double speed = 1.0;
   String currentAudioMode = "Standard Stereo";
 
-  bool isPip = false;
-  Offset pipOff = const Offset(20, 100);
-
   double bright = 0.5;
   double vol = 1.0;
   bool showHud = false;
@@ -583,7 +563,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
 
     player.stream.playing.listen((p) {
       if (mounted) setState(() => isPlaying = p);
-      _updateSystemNotification();
+      _sendNotification();
     });
     player.stream.position.listen((p) { if (mounted) setState(() => pos = p); });
     player.stream.duration.listen((d) { if (mounted) setState(() => dur = d); });
@@ -592,22 +572,18 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     _playIndex(currentIndex);
   }
 
-  // System notification for background music playback
-  void _updateSystemNotification() {
+  void _sendNotification() {
     final cur = widget.playlist[currentIndex];
-    // Native method call platform channel trigger for Android Notification bar
-    const channel = MethodChannel('com.mehra.player/media');
-    channel.invokeMethod('showNotification', {
+    platformChannel.invokeMethod('showNotification', {
       'title': cur.title,
       'isPlaying': isPlaying,
-      'isVideo': cur.isVideo,
     }).catchError((_) {});
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused && isPlaying) {
-      player.play(); // Background continuous playback
+      player.play(); // Background continuous play
     }
   }
 
@@ -631,27 +607,26 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     await player.open(Media(widget.playlist[i].path));
     await player.play();
     _applyAudioMode(currentAudioMode);
-    _updateSystemNotification();
+    _sendNotification();
   }
 
-  // Live 8D / 16D / Dolby Atmos / Lofi DSP Sound Engine
   void _applyAudioMode(String mode) {
     setState(() => currentAudioMode = mode);
     if (mode == "8D Audio Surround") {
       player.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
-    } else if (mode == "16D Audio Spatial") {
+    } else if (mode == "16D Spatial") {
       player.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
     } else if (mode == "Dolby Atmos Bass") {
       player.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
     } else if (mode == "Lofi Chill Bass") {
       player.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
     } else {
-      player.setProperty('af', ''); // Reset stereo
+      player.setProperty('af', '');
     }
   }
 
   void _showAudioEffectsSheet() {
-    final effects = ["Standard Stereo", "8D Audio Surround", "16D Audio Spatial", "Dolby Atmos Bass", "Lofi Chill Bass"];
+    final effects = ["Standard Stereo", "8D Audio Surround", "16D Spatial", "Dolby Atmos Bass", "Lofi Chill Bass"];
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF161722),
@@ -757,64 +732,28 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     );
   }
 
-  // Adjust true window brightness on phone hardware
   void _setHardwareBrightness(double delta) {
     setState(() {
       bright = (bright + delta).clamp(0.01, 1.0);
       hudName = "Screen Brightness";
       hudVal = bright * 100;
     });
-    // Set actual screen window brightness via native platform channel
-    const channel = MethodChannel('com.mehra.player/brightness');
-    channel.invokeMethod('setBrightness', {'brightness': bright}).catchError((_) {});
+    platformChannel.invokeMethod('setBrightness', {'brightness': bright}).catchError((_) {});
+  }
+
+  void _triggerNativePip() async {
+    final success = await platformChannel.invokeMethod<bool>('enterPip');
+    if (success != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enable PiP permission in Settings for Mehra Player")),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final cur = widget.playlist[currentIndex];
     final screenW = MediaQuery.of(context).size.width;
-
-    if (isPip) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            Positioned(
-              left: pipOff.dx,
-              top: pipOff.dy,
-              child: GestureDetector(
-                onPanUpdate: (d) => setState(() => pipOff += d.delta),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    width: 220,
-                    height: 125,
-                    color: Colors.black,
-                    child: Stack(
-                      children: [
-                        cur.isVideo
-                            ? SizedBox.expand(child: Video(controller: controller, controls: NoVideoControls))
-                            : Container(
-                                color: const Color(0xFF161720),
-                                child: const Center(child: Icon(Icons.music_note, color: Color(0xFF00E676), size: 40)),
-                              ),
-                        Positioned(
-                          right: 4, top: 4,
-                          child: GestureDetector(
-                            onTap: () => setState(() => isPip = false),
-                            child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 22),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -920,12 +859,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   ],
                 ),
               ),
-              // PiP Button
+              // PiP Button (Native Android PiP)
               Positioned(
                 right: 10, top: 100,
                 child: IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
-                  onPressed: () => setState(() => isPip = true),
+                  onPressed: _triggerNativePip,
                 ),
               ),
 
