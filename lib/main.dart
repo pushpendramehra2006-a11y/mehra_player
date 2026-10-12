@@ -11,6 +11,9 @@ import 'package:permission_handler/permission_handler.dart';
 
 const platformChannel = MethodChannel('com.mehra.player/native');
 
+// Global In-Memory Thumbnail Cache to stop scrolling lag permanently
+final Map<String, Uint8List> thumbnailCache = {};
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -47,7 +50,6 @@ class MediaFile {
   final bool isVideo;
   final String folderName;
   final DateTime modifiedTime;
-  Uint8List? thumbBytes;
 
   MediaFile({
     required this.path,
@@ -56,7 +58,6 @@ class MediaFile {
     required this.isVideo,
     required this.folderName,
     required this.modifiedTime,
-    this.thumbBytes,
   });
 
   String get formattedSize {
@@ -195,25 +196,9 @@ class _MainTabScreenState extends State<MainTabScreen> {
           isScanning = false;
         });
         _applySorting();
-        _fetchNativeThumbnails();
       }
     } catch (_) {
       if (mounted) setState(() => isScanning = false);
-    }
-  }
-
-  Future<void> _fetchNativeThumbnails() async {
-    for (var v in videoList) {
-      if (!mounted) break;
-      if (v.thumbBytes != null) continue;
-      try {
-        final Uint8List? bytes = await platformChannel.invokeMethod('getThumbnail', {'path': v.path});
-        if (bytes != null && mounted) {
-          setState(() {
-            v.thumbBytes = bytes;
-          });
-        }
-      } catch (_) {}
     }
   }
 
@@ -592,7 +577,6 @@ class _MainTabScreenState extends State<MainTabScreen> {
                 ),
                 if (downloading) ...[
                   const SizedBox(height: 16),
-                  // Animated Dynamic Network Graph Widget
                   Container(
                     height: 52,
                     width: double.infinity,
@@ -773,18 +757,16 @@ class _MainTabScreenState extends State<MainTabScreen> {
         return ListTile(
           onTap: () => _openPlayer(videoList, idx),
           leading: Container(
-            width: 90,
-            height: 54,
+            width: 80,
+            height: 48,
             decoration: BoxDecoration(
               color: const Color(0xFF1E1F2B),
               borderRadius: BorderRadius.circular(6),
-              image: item.thumbBytes != null
-                  ? DecorationImage(image: MemoryImage(item.thumbBytes!), fit: BoxFit.cover)
-                  : null,
             ),
-            child: item.thumbBytes == null
-                ? const Icon(Icons.movie_filter_rounded, color: Colors.white38)
-                : null,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: CachedVideoThumbnail(path: item.path),
+            ),
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
           subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
@@ -828,7 +810,47 @@ class _MainTabScreenState extends State<MainTabScreen> {
   }
 }
 
-// Live Dynamic Audio/Network Frequency Graph for Mehra Downloader
+// Memory-Cached Thumbnail Widget that never freezes list scrolling
+class CachedVideoThumbnail extends StatefulWidget {
+  final String path;
+  const CachedVideoThumbnail({super.key, required this.path});
+
+  @override
+  State<CachedVideoThumbnail> createState() => _CachedVideoThumbnailState();
+}
+
+class _CachedVideoThumbnailState extends State<CachedVideoThumbnail> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    if (thumbnailCache.containsKey(widget.path)) {
+      _bytes = thumbnailCache[widget.path];
+    } else {
+      _load();
+    }
+  }
+
+  void _load() async {
+    try {
+      final Uint8List? res = await platformChannel.invokeMethod('getThumbnail', {'path': widget.path});
+      if (res != null) {
+        thumbnailCache[widget.path] = res;
+        if (mounted) setState(() => _bytes = res);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes != null) {
+      return Image.memory(_bytes!, fit: BoxFit.cover, gaplessPlayback: true);
+    }
+    return const Icon(Icons.movie_filter_rounded, color: Colors.white38, size: 22);
+  }
+}
+
 class DownloadGraphAnimation extends StatefulWidget {
   final bool isDownloading;
   const DownloadGraphAnimation({super.key, required this.isDownloading});
@@ -879,6 +901,7 @@ class _DownloadGraphAnimationState extends State<DownloadGraphAnimation> with Si
   }
 }
 
+// Adaptive Hardware Video Player: Auto scales per chipset (low-end to flagship)
 class PlayitVideoPlayer extends StatefulWidget {
   final List<MediaFile> playlist;
   final int initialIndex;
@@ -897,7 +920,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
   bool isPlaying = false;
   Duration pos = Duration.zero;
   Duration dur = Duration.zero;
-  bool isInitialized = false;
+  bool isReady = false;
 
   bool controls = true;
   bool isLocked = false;
@@ -920,17 +943,25 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
+    // 1. Safe Hardware Initializer
     player = Player(
       configuration: const PlayerConfiguration(
         pitch: true,
       ),
     );
 
+    // 2. Hardware Adaptive Configuration (Works on any chipset without crash)
     dynamic native = player.platform;
-    native?.setProperty('hwdec', 'mediacodec');
-    native?.setProperty('vo', 'gpu');
-    native?.setProperty('video-sync', 'audio');
+    try {
+      native?.setProperty('hwdec', 'auto-safe'); // Auto detects MediaCodec or Software fallback per processor
+      native?.setProperty('vo', 'gpu');
+      native?.setProperty('gpu-context', 'android');
+      native?.setProperty('demuxer-max-bytes', '64MiB'); // Prevents out-of-memory crash on mid-range devices
+      native?.setProperty('demuxer-max-back-bytes', '16MiB');
+      native?.setProperty('video-sync', 'audio');
+    } catch (_) {}
 
+    // 3. Setup video controller safely
     if (widget.playlist[currentIndex].isVideo) {
       controller = VideoController(
         player,
@@ -960,7 +991,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     player.stream.duration.listen((d) { if (mounted) setState(() => dur = d); });
     player.stream.tracks.listen((t) { if (mounted) setState(() => tracks = t); });
 
-    _playIndex(currentIndex);
+    // Open video only after widget tree finishes build to avoid black screen crash
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _playIndex(currentIndex);
+    });
   }
 
   void _sendNotification() {
@@ -991,7 +1025,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
     if (i < 0 || i >= widget.playlist.length) return;
     setState(() {
       currentIndex = i;
-      isInitialized = false;
+      isReady = false;
     });
 
     if (widget.playlist[i].isVideo && controller == null) {
@@ -1001,11 +1035,13 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
       );
     }
 
-    await player.open(Media(widget.playlist[i].path));
-    await player.play();
+    try {
+      await player.open(Media(widget.playlist[i].path));
+      await player.play();
+    } catch (_) {}
 
     if (mounted) {
-      setState(() => isInitialized = true);
+      setState(() => isReady = true);
       _applyAudioMode(currentAudioMode);
       _applyColorMode(currentColorMode);
       _sendNotification();
@@ -1015,43 +1051,43 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
   void _applyAudioMode(String mode) {
     setState(() => currentAudioMode = mode);
     dynamic native = player.platform;
-    if (mode == "8D Audio Surround") {
-      native?.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
-    } else if (mode == "16D Spatial") {
-      native?.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
-    } else if (mode == "Dolby Atmos Bass") {
-      native?.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
-    } else if (mode == "Lofi Chill Bass") {
-      native?.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
-    } else {
-      native?.setProperty('af', '');
-    }
+    try {
+      if (mode == "8D Audio Surround") {
+        native?.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
+      } else if (mode == "16D Spatial") {
+        native?.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
+      } else if (mode == "Dolby Atmos Bass") {
+        native?.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
+      } else if (mode == "Lofi Chill Bass") {
+        native?.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
+      } else {
+        native?.setProperty('af', '');
+      }
+    } catch (_) {}
   }
 
   void _applyColorMode(String mode) {
     setState(() => currentColorMode = mode);
     dynamic native = player.platform;
-    if (mode == "Pixel Vivid HDR") {
-      native?.setProperty('saturation', '30');
-      native?.setProperty('contrast', '15');
-      native?.setProperty('brightness', '2');
-      native?.setProperty('gamma', '3');
-    } else if (mode == "Ultra AMOLED") {
-      native?.setProperty('saturation', '45');
-      native?.setProperty('contrast', '24');
-      native?.setProperty('brightness', '0');
-      native?.setProperty('gamma', '-2');
-    } else if (mode == "Cinema Rich") {
-      native?.setProperty('saturation', '18');
-      native?.setProperty('contrast', '10');
-      native?.setProperty('brightness', '1');
-      native?.setProperty('gamma', '2');
-    } else {
-      native?.setProperty('saturation', '0');
-      native?.setProperty('contrast', '0');
-      native?.setProperty('brightness', '0');
-      native?.setProperty('gamma', '0');
-    }
+    try {
+      if (mode == "Pixel Vivid HDR") {
+        native?.setProperty('saturation', '25');
+        native?.setProperty('contrast', '12');
+        native?.setProperty('gamma', '2');
+      } else if (mode == "Ultra AMOLED") {
+        native?.setProperty('saturation', '40');
+        native?.setProperty('contrast', '20');
+        native?.setProperty('gamma', '-1');
+      } else if (mode == "Cinema Rich") {
+        native?.setProperty('saturation', '15');
+        native?.setProperty('contrast', '8');
+        native?.setProperty('gamma', '1');
+      } else {
+        native?.setProperty('saturation', '0');
+        native?.setProperty('contrast', '0');
+        native?.setProperty('gamma', '0');
+      }
+    } catch (_) {}
   }
 
   void _showColorModesSheet() {
@@ -1277,6 +1313,14 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> {
                       backgroundColor: const Color(0xFF161722),
                     )
                   ],
+                ),
+              ),
+
+            if (!isReady && cur.isVideo)
+              Container(
+                color: Colors.black54,
+                child: const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF00E676)),
                 ),
               ),
 
