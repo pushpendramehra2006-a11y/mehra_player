@@ -1,22 +1,16 @@
 ﻿import 'dart:io';
-import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
   runApp(const MehraPlayerApp());
 }
 
@@ -44,16 +38,16 @@ class MehraPlayerApp extends StatelessWidget {
 }
 
 class MediaFile {
-  File file;
-  String title;
-  int sizeBytes;
+  final String path;
+  final String title;
+  final int sizeBytes;
   final bool isVideo;
-  String folderName;
-  DateTime modifiedTime;
+  final String folderName;
+  final DateTime modifiedTime;
   String? thumbPath;
 
   MediaFile({
-    required this.file,
+    required this.path,
     required this.title,
     required this.sizeBytes,
     required this.isVideo,
@@ -79,16 +73,19 @@ class _MainTabScreenState extends State<MainTabScreen> {
   int _currentNavIndex = 0;
   List<MediaFile> videoList = [];
   List<MediaFile> audioList = [];
-  bool isLoading = true;
+  bool isScanning = false;
   String sortBy = "time";
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initApp());
+    // App turant load hogi, black screen zero percent
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestAndScan();
+    });
   }
 
-  void _initApp() async {
+  Future<void> _requestAndScan() async {
     if (Platform.isAndroid) {
       await [
         Permission.storage,
@@ -97,100 +94,147 @@ class _MainTabScreenState extends State<MainTabScreen> {
         Permission.manageExternalStorage,
       ].request();
     }
-    _scanStorage();
+    _startBackgroundScan();
   }
 
-  Future<String> _getAppDir(bool isVideo) async {
-    final base = isVideo ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer';
-    final dir = Directory(base);
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir.path;
-  }
+  // Background Isolate scan taaki UI thread 1 ms ke liye bhi freeze na ho
+  Future<void> _startBackgroundScan() async {
+    if (isScanning) return;
+    setState(() => isScanning = true);
 
-  Future<void> _scanStorage() async {
-    if (!mounted) return;
-    setState(() => isLoading = true);
-
-    List<Directory> targetDirs = [];
-    if (Platform.isAndroid) {
-      final safeFolders = ['DCIM', 'Movies', 'Download', 'WhatsApp', 'Telegram', 'Snapchat', 'Music', 'Documents'];
-      for (var f in safeFolders) {
-        final d = Directory('/storage/emulated/0/$f');
-        if (d.existsSync()) targetDirs.add(d);
-      }
-      final mediaDir = Directory('/storage/emulated/0/Android/media');
-      if (mediaDir.existsSync()) targetDirs.add(mediaDir);
-    } else {
-      final home = Platform.environment['USERPROFILE'] ?? 'C:';
-      targetDirs = [Directory('$home\\Videos'), Directory('$home\\Downloads'), Directory('$home\\Music')];
-    }
-
-    List<MediaFile> vids = [];
-    List<MediaFile> auds = [];
-
-    await Future.microtask(() {
-      for (var dir in targetDirs) {
-        try {
-          final entries = dir.listSync(recursive: true, followLinks: false);
-          for (var e in entries) {
-            if (e is File) {
-              final p = e.path.toLowerCase();
-              final name = e.path.split(Platform.pathSeparator).last;
-              if (name.startsWith('.')) continue;
-
-              final folder = e.parent.path.split(Platform.pathSeparator).last;
-              final stat = e.statSync();
-
-              if (p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.webm') || p.endsWith('.3gp') || p.endsWith('.flv') || p.endsWith('.ts')) {
-                vids.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: true, folderName: folder, modifiedTime: stat.modified));
-              } else if (p.endsWith('.mp3') || p.endsWith('.wav') || p.endsWith('.m4a') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac')) {
-                auds.add(MediaFile(file: e, title: name, sizeBytes: stat.size, isVideo: false, folderName: folder, modifiedTime: stat.modified));
-              }
-            }
-          }
-        } catch (_) {}
-      }
-    });
-
-    if (mounted) {
-      setState(() {
-        videoList = vids;
-        audioList = auds;
-        isLoading = false;
-      });
-      _applySorting();
-      _extractThumbnailsSequentially(vids);
-    }
-  }
-
-  Future<void> _extractThumbnailsSequentially(List<MediaFile> vids) async {
-    final cacheDir = Directory("${Directory.systemTemp.path}/mehra_player_thumbs");
-    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-
-    Player? thumbWorker;
     try {
-      thumbWorker = Player();
-      for (var v in vids.take(30)) {
-        if (!mounted) break;
-        final thumbPath = "${cacheDir.path}/${v.file.path.hashCode}.jpg";
-        final thumbFile = File(thumbPath);
+      final results = await Isolate.run(() {
+        List<Map<String, dynamic>> foundVideos = [];
+        List<Map<String, dynamic>> foundAudios = [];
 
-        if (await thumbFile.exists()) {
-          if (mounted) setState(() => v.thumbPath = thumbPath);
+        List<Directory> targetDirs = [];
+        if (Platform.isAndroid) {
+          final rootDirs = [
+            '/storage/emulated/0/DCIM',
+            '/storage/emulated/0/Movies',
+            '/storage/emulated/0/Download',
+            '/storage/emulated/0/WhatsApp/Media',
+            '/storage/emulated/0/Android/media/com.whatsapp/WhatsApp/Media',
+            '/storage/emulated/0/Telegram',
+            '/storage/emulated/0/Music',
+            '/storage/emulated/0/Video'
+          ];
+          for (var p in rootDirs) {
+            final d = Directory(p);
+            if (d.existsSync()) targetDirs.add(d);
+          }
         } else {
+          final home = Platform.environment['USERPROFILE'] ?? 'C:';
+          targetDirs = [Directory('$home\\Videos'), Directory('$home\\Downloads'), Directory('$home\\Music')];
+        }
+
+        for (var dir in targetDirs) {
           try {
-            await thumbWorker.open(Media(v.file.path), play: false);
-            await Future.delayed(const Duration(milliseconds: 200));
-            final Uint8List? screenshot = await thumbWorker.screenshot(format: 'image/jpeg');
-            if (screenshot != null && screenshot.isNotEmpty) {
-              await thumbFile.writeAsBytes(screenshot);
-              if (mounted) setState(() => v.thumbPath = thumbPath);
+            final entities = dir.listSync(recursive: true, followLinks: false);
+            for (var e in entities) {
+              if (e is File) {
+                final p = e.path.toLowerCase();
+                final name = e.path.split(Platform.pathSeparator).last;
+                if (name.startsWith('.')) continue;
+
+                final folder = e.parent.path.split(Platform.pathSeparator).last;
+                final stat = e.statSync();
+
+                final isVid = p.endsWith('.mp4') || p.endsWith('.mkv') || p.endsWith('.webm') || p.endsWith('.avi') || p.endsWith('.mov') || p.endsWith('.3gp') || p.endsWith('.flv');
+                final isAud = p.endsWith('.mp3') || p.endsWith('.m4a') || p.endsWith('.wav') || p.endsWith('.flac') || p.endsWith('.ogg') || p.endsWith('.aac');
+
+                if (isVid) {
+                  foundVideos.add({
+                    'path': e.path,
+                    'title': name,
+                    'size': stat.size,
+                    'folder': folder,
+                    'time': stat.modified.millisecondsSinceEpoch,
+                    'isVideo': true
+                  });
+                } else if (isAud) {
+                  foundAudios.add({
+                    'path': e.path,
+                    'title': name,
+                    'size': stat.size,
+                    'folder': folder,
+                    'time': stat.modified.millisecondsSinceEpoch,
+                    'isVideo': false
+                  });
+                }
+              }
             }
           } catch (_) {}
         }
+        return {'vids': foundVideos, 'auds': foundAudios};
+      });
+
+      List<MediaFile> mappedVids = (results['vids'] as List).map((m) => MediaFile(
+        path: m['path'],
+        title: m['title'],
+        sizeBytes: m['size'],
+        isVideo: true,
+        folderName: m['folder'],
+        modifiedTime: DateTime.fromMillisecondsSinceEpoch(m['time']),
+      )).toList();
+
+      List<MediaFile> mappedAuds = (results['auds'] as List).map((m) => MediaFile(
+        path: m['path'],
+        title: m['title'],
+        sizeBytes: m['size'],
+        isVideo: false,
+        folderName: m['folder'],
+        modifiedTime: DateTime.fromMillisecondsSinceEpoch(m['time']),
+      )).toList();
+
+      if (mounted) {
+        setState(() {
+          videoList = mappedVids;
+          audioList = mappedAuds;
+          isScanning = false;
+        });
+        _applySorting();
+        _loadThumbnailsOneByOne();
+      }
+    } catch (_) {
+      if (mounted) setState(() => isScanning = false);
+    }
+  }
+
+  // Crash-Proof Thumbnail Extraction
+  Future<void> _loadThumbnailsOneByOne() async {
+    final thumbDir = Directory("${Directory.systemTemp.path}/player_thumbs");
+    if (!await thumbDir.exists()) await thumbDir.create(recursive: true);
+
+    // Pehle jo thumbs already cached hain unhe turant bind karo
+    for (var v in videoList) {
+      final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
+      if (File(cachePath).existsSync()) {
+        if (mounted) setState(() => v.thumbPath = cachePath);
+      }
+    }
+
+    // Naye thumbs ke liye single dedicated background worker
+    Player? worker;
+    try {
+      worker = Player();
+      for (var v in videoList.where((e) => e.thumbPath == null).take(30)) {
+        if (!mounted) break;
+        final cachePath = "${thumbDir.path}/${v.path.hashCode}.jpg";
+        final file = File(cachePath);
+
+        try {
+          await worker.open(Media(v.path), play: false);
+          await Future.delayed(const Duration(milliseconds: 150));
+          final Uint8List? frame = await worker.screenshot(format: 'image/jpeg');
+          if (frame != null && frame.isNotEmpty) {
+            await file.writeAsBytes(frame, flush: true);
+            if (mounted) setState(() => v.thumbPath = cachePath);
+          }
+        } catch (_) {}
       }
     } finally {
-      thumbWorker?.dispose();
+      worker?.dispose();
     }
   }
 
@@ -209,17 +253,17 @@ class _MainTabScreenState extends State<MainTabScreen> {
     });
   }
 
-  void _showSortDialog() {
+  void _showSortSheet() {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF161722),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Sort Files", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text("Sort Videos & Music", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ListTile(
               leading: const Icon(Icons.access_time_rounded),
               title: const Text("Date / Time (Newest First)"),
@@ -244,30 +288,29 @@ class _MainTabScreenState extends State<MainTabScreen> {
     );
   }
 
-  void _showDownloaderDialog({String? prefillUrl}) {
-    final urlController = TextEditingController(text: prefillUrl ?? '');
-    String downloadMode = "video";
-    List<String> videoQualities = ["Auto (Best Available)", "1080p / High", "720p / Med", "480p / Low", "Direct Stream / Torrent / ZIP"];
-    List<String> audioModes = ["Original MP3", "8D Audio Boost", "Lofi Chill Bass"];
-    String selectedQuality = "Auto (Best Available)";
-    String selectedAudio = "Original MP3";
-    bool isDownloading = false;
-    double downloadProgress = 0.0;
-    int progressPercent = 0;
-    String statusText = "";
+  void _showDownloaderDialog() {
+    final urlCtrl = TextEditingController();
+    String mode = "video";
+    List<String> vidOpts = ["Auto (Best Available)", "High (1080p/720p)", "Fast (480p/360p)", "Direct Stream / ZIP / Torrent"];
+    List<String> audOpts = ["Original MP3", "8D Audio Boost", "Lofi Chill Bass"];
+    String selVid = "Auto (Best Available)";
+    String selAud = "Original MP3";
+    bool downloading = false;
+    double progress = 0.0;
+    String status = "";
 
     showDialog(
       context: context,
-      barrierDismissible: !isDownloading,
+      barrierDismissible: !downloading,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDState) => AlertDialog(
           backgroundColor: const Color(0xFF171822),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(
             children: const [
               Icon(Icons.download_rounded, color: Color(0xFF00E676)),
-              SizedBox(width: 10),
-              Text("Universal Media Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              SizedBox(width: 8),
+              Text("Universal Downloader", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ],
           ),
           content: SingleChildScrollView(
@@ -276,86 +319,85 @@ class _MainTabScreenState extends State<MainTabScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextField(
-                  controller: urlController,
-                  enabled: !isDownloading,
+                  controller: urlCtrl,
+                  enabled: !downloading,
                   decoration: InputDecoration(
-                    hintText: "Enter video, music, ZIP, or torrent link...",
+                    hintText: "Paste video, audio, ZIP, or torrent URL...",
                     hintStyle: const TextStyle(fontSize: 12, color: Colors.white38),
                     filled: true,
-                    fillColor: Colors.black38,
+                    fillColor: Colors.black26,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     ChoiceChip(
                       label: const Text("Video / ZIP"),
-                      selected: downloadMode == "video",
+                      selected: mode == "video",
                       selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadMode = "video"),
+                      onSelected: downloading ? null : (_) => setDState(() => mode = "video"),
                     ),
                     const SizedBox(width: 8),
                     ChoiceChip(
                       label: const Text("Audio MP3"),
-                      selected: downloadMode == "audio",
+                      selected: mode == "audio",
                       selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() => downloadMode = "audio"),
+                      onSelected: downloading ? null : (_) => setDState(() => mode = "audio"),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                const Text("Quality / Format:", style: TextStyle(fontSize: 12, color: Colors.white60)),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
-                  children: (downloadMode == "video" ? videoQualities : audioModes).map((opt) {
-                    final isSel = (downloadMode == "video" ? selectedQuality : selectedAudio) == opt;
+                  children: (mode == "video" ? vidOpts : audOpts).map((opt) {
+                    final isSel = (mode == "video" ? selVid : selAud) == opt;
                     return ChoiceChip(
                       label: Text(opt, style: TextStyle(color: isSel ? Colors.black : Colors.white, fontSize: 11)),
                       selected: isSel,
                       selectedColor: const Color(0xFF00E676),
-                      onSelected: isDownloading ? null : (_) => setDialogState(() {
-                        if (downloadMode == "video") selectedQuality = opt; else selectedAudio = opt;
+                      onSelected: downloading ? null : (_) => setDState(() {
+                        if (mode == "video") selVid = opt; else selAud = opt;
                       }),
                     );
                   }).toList(),
                 ),
-                if (isDownloading) ...[
-                  const SizedBox(height: 16),
+                if (downloading) ...[
+                  const SizedBox(height: 14),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(value: downloadProgress > 0 ? downloadProgress : null, color: const Color(0xFF00E676)),
+                    child: LinearProgressIndicator(value: progress > 0 ? progress : null, color: const Color(0xFF00E676)),
                   ),
                   const SizedBox(height: 6),
-                  Text(statusText.isEmpty ? "Downloading: $progressPercent%" : statusText, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
+                  Text(status, style: const TextStyle(fontSize: 11, color: Colors.white70)),
                 ]
               ],
             ),
           ),
           actions: [
-            if (!isDownloading) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            if (!downloading) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-              onPressed: isDownloading
+              onPressed: downloading
                   ? null
                   : () async {
-                      final u = urlController.text.trim();
+                      final u = urlCtrl.text.trim();
                       if (u.isEmpty || !u.startsWith("http")) return;
-                      setDialogState(() {
-                        isDownloading = true;
-                        statusText = "Connecting & resolving stream...";
+                      setDState(() {
+                        downloading = true;
+                        status = "Connecting stream...";
                       });
                       try {
-                        final isVid = downloadMode == "video";
-                        final dir = await _getAppDir(isVid);
-                        String ext = "mp4";
+                        final isV = mode == "video";
+                        final dir = Directory(isV ? '/storage/emulated/0/Movies/MehraPlayer' : '/storage/emulated/0/Music/MehraPlayer');
+                        if (!await dir.exists()) await dir.create(recursive: true);
+
+                        String ext = isV ? "mp4" : "mp3";
                         if (u.contains(".zip")) ext = "zip";
                         else if (u.contains(".torrent")) ext = "torrent";
-                        else if (!isVid) ext = "mp3";
 
-                        final savePath = "$dir/Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
+                        final savePath = "${dir.path}/Mehra_${DateTime.now().millisecondsSinceEpoch}.$ext";
                         final req = http.Request('GET', Uri.parse(u));
                         req.headers['User-Agent'] = 'Mozilla/5.0';
                         final res = await req.send();
@@ -367,28 +409,27 @@ class _MainTabScreenState extends State<MainTabScreen> {
                         await res.stream.listen((chunk) {
                           sink.add(chunk);
                           got += chunk.length;
-                          setDialogState(() {
+                          setDState(() {
                             if (total > 0) {
-                              downloadProgress = (got / total).clamp(0.0, 1.0);
-                              progressPercent = (downloadProgress * 100).toInt();
-                              statusText = "Downloading: $progressPercent%";
+                              progress = (got / total).clamp(0.0, 1.0);
+                              status = "Downloading: ${(progress * 100).toInt()}%";
                             } else {
-                              statusText = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB downloaded";
+                              status = "${(got / (1024 * 1024)).toStringAsFixed(1)} MB downloaded";
                             }
                           });
                         }).asFuture();
 
                         await sink.close();
                         Navigator.pop(ctx);
-                        _scanStorage();
-                      } catch (e) {
-                        setDialogState(() {
-                          isDownloading = false;
-                          statusText = "Error: Check link accessibility";
+                        _startBackgroundScan();
+                      } catch (_) {
+                        setDState(() {
+                          downloading = false;
+                          status = "Error resolving link.";
                         });
                       }
                     },
-              child: const Text("Start Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text("Download", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -396,7 +437,7 @@ class _MainTabScreenState extends State<MainTabScreen> {
     );
   }
 
-  void _launchPlayer(List<MediaFile> list, int index) {
+  void _openPlayer(List<MediaFile> list, int index) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -411,16 +452,19 @@ class _MainTabScreenState extends State<MainTabScreen> {
       backgroundColor: const Color(0xFF0C0D11),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0C0D11),
-        title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22)),
+        title: const Text('Mehra Player', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
         actions: [
-          IconButton(icon: const Icon(Icons.sort_rounded), onPressed: _showSortDialog),
-          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: () => _showDownloaderDialog()),
-          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _scanStorage),
+          IconButton(icon: const Icon(Icons.sort_rounded), onPressed: _showSortSheet),
+          IconButton(icon: const Icon(Icons.download_rounded, color: Color(0xFF00E676)), onPressed: _showDownloaderDialog),
+          IconButton(
+            icon: isScanning
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00E676)))
+                : const Icon(Icons.refresh_rounded),
+            onPressed: isScanning ? null : _startBackgroundScan,
+          ),
         ],
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF00E676)))
-          : (_currentNavIndex == 0 ? _buildVideosTab() : _buildMusicTab()),
+      body: _currentNavIndex == 0 ? _buildVideos() : _buildAudios(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentNavIndex,
         onTap: (i) => setState(() => _currentNavIndex = i),
@@ -428,57 +472,67 @@ class _MainTabScreenState extends State<MainTabScreen> {
         selectedItemColor: const Color(0xFF00E676),
         unselectedItemColor: Colors.white38,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.smart_display_rounded), label: "VIDEO"),
-          BottomNavigationBarItem(icon: Icon(Icons.audiotrack_rounded), label: "AUDIO"),
+          BottomNavigationBarItem(icon: Icon(Icons.smart_display_rounded), label: "VIDEOS"),
+          BottomNavigationBarItem(icon: Icon(Icons.audiotrack_rounded), label: "MUSIC"),
         ],
       ),
     );
   }
 
-  Widget _buildVideosTab() {
+  Widget _buildVideos() {
+    if (videoList.isEmpty && isScanning) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF00E676)));
+    }
     if (videoList.isEmpty) {
-      return const Center(child: Text("No videos found. Click refresh.", style: TextStyle(color: Colors.white38)));
+      return const Center(child: Text("No videos found. Tap refresh.", style: TextStyle(color: Colors.white38)));
     }
     return ListView.builder(
       itemCount: videoList.length,
-      itemBuilder: (ctx, index) {
-        final item = videoList[index];
+      itemBuilder: (ctx, idx) {
+        final item = videoList[idx];
         return ListTile(
-          onTap: () => _launchPlayer(videoList, index),
+          onTap: () => _openPlayer(videoList, idx),
           leading: Container(
-            width: 90,
-            height: 55,
+            width: 85,
+            height: 52,
             decoration: BoxDecoration(
               color: const Color(0xFF1E1F2B),
               borderRadius: BorderRadius.circular(6),
-              image: item.thumbPath != null ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover) : null,
+              image: item.thumbPath != null
+                  ? DecorationImage(image: FileImage(File(item.thumbPath!)), fit: BoxFit.cover)
+                  : null,
             ),
-            child: item.thumbPath == null ? const Icon(Icons.movie_creation_outlined, color: Colors.white38) : null,
+            child: item.thumbPath == null
+                ? const Icon(Icons.play_circle_outline, color: Colors.white38)
+                : null,
           ),
-          title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
+          title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
           subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
         );
       },
     );
   }
 
-  Widget _buildMusicTab() {
+  Widget _buildAudios() {
     if (audioList.isEmpty) {
       return const Center(child: Text("No music files found.", style: TextStyle(color: Colors.white38)));
     }
     return ListView.builder(
       itemCount: audioList.length,
-      itemBuilder: (ctx, i) {
-        final item = audioList[i];
+      itemBuilder: (ctx, idx) {
+        final item = audioList[idx];
         return ListTile(
-          onTap: () => _launchPlayer(audioList, i),
+          onTap: () => _openPlayer(audioList, idx),
           leading: Container(
-            width: 45,
-            height: 45,
-            decoration: BoxDecoration(color: const Color(0xFF00E676).withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFF00E676).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
           ),
-          title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
+          title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
           subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
         );
       },
@@ -496,56 +550,56 @@ class PlayitVideoPlayer extends StatefulWidget {
   State<PlayitVideoPlayer> createState() => _PlayitVideoPlayerState();
 }
 
-class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProviderStateMixin, WidgetsBindingObserver {
+class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindingObserver {
   late final player = Player(configuration: const PlayerConfiguration(bufferSize: 256 * 1024 * 1024, pitch: true));
   late final controller = VideoController(player);
-  late TransformationController _transformController;
+  late TransformationController _zoomCtrl;
   late int currentIndex;
   bool isPlaying = false;
-  Duration position = Duration.zero;
-  Duration duration = Duration.zero;
+  Duration pos = Duration.zero;
+  Duration dur = Duration.zero;
 
-  bool controlsVisible = true;
+  bool controls = true;
   bool isLocked = false;
   bool isMuted = false;
-  bool isLandscape = false;
-  double playbackSpeed = 1.0;
-  bool isFloatingPip = false;
-  Offset pipOffset = const Offset(20, 100);
+  bool isLand = false;
+  double speed = 1.0;
+  bool isPip = false;
+  Offset pipOff = const Offset(20, 100);
 
-  double brightness = 0.5;
-  double volume = 1.0;
-  bool showGesture = false;
-  String gestureName = "";
-  double gestureVal = 0.0;
-  Tracks currentTracks = const Tracks();
+  double bright = 0.5;
+  double vol = 1.0;
+  bool showHud = false;
+  String hudName = "";
+  double hudVal = 0.0;
+  Tracks tracks = const Tracks();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     currentIndex = widget.initialIndex;
-    _transformController = TransformationController();
+    _zoomCtrl = TransformationController();
 
     player.stream.playing.listen((p) { if (mounted) setState(() => isPlaying = p); });
-    player.stream.position.listen((pos) { if (mounted) setState(() => position = pos); });
-    player.stream.duration.listen((d) { if (mounted) setState(() => duration = d); });
-    player.stream.tracks.listen((tr) { if (mounted) setState(() => currentTracks = tr); });
+    player.stream.position.listen((p) { if (mounted) setState(() => pos = p); });
+    player.stream.duration.listen((d) { if (mounted) setState(() => dur = d); });
+    player.stream.tracks.listen((t) { if (mounted) setState(() => tracks = t); });
 
-    _openMedia(currentIndex);
+    _playIndex(currentIndex);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      if (isPlaying) player.play();
+    if (state == AppLifecycleState.paused && isPlaying) {
+      player.play(); // Background continuous play
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _transformController.dispose();
+    _zoomCtrl.dispose();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -556,22 +610,17 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     super.dispose();
   }
 
-  void _openMedia(int index) async {
-    if (index < 0 || index >= widget.playlist.length) return;
-    setState(() => currentIndex = index);
-    final file = widget.playlist[index].file;
-    if (!await file.exists()) {
-      _showMissingFileDialog();
-      return;
-    }
-    await player.open(Media(file.path));
+  void _playIndex(int i) async {
+    if (i < 0 || i >= widget.playlist.length) return;
+    setState(() => currentIndex = i);
+    await player.open(Media(widget.playlist[i].path));
     await player.play();
   }
 
   void _toggleRotation() {
     setState(() {
-      isLandscape = !isLandscape;
-      if (isLandscape) {
+      isLand = !isLand;
+      if (isLand) {
         SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
       } else {
         SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -586,36 +635,28 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
       backgroundColor: const Color(0xFF161722),
       builder: (ctx) => Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Playback Speed", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: speeds.map((s) {
-                final isSel = playbackSpeed == s;
-                return ChoiceChip(
-                  label: Text("${s}x", style: TextStyle(color: isSel ? Colors.black : Colors.white)),
-                  selected: isSel,
-                  selectedColor: const Color(0xFF00E676),
-                  onSelected: (_) {
-                    setState(() => playbackSpeed = s);
-                    player.setRate(s);
-                    Navigator.pop(ctx);
-                  },
-                );
-              }).toList(),
-            ),
-          ],
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: speeds.map((s) {
+            final isSel = speed == s;
+            return ChoiceChip(
+              label: Text("${s}x", style: TextStyle(color: isSel ? Colors.black : Colors.white)),
+              selected: isSel,
+              selectedColor: const Color(0xFF00E676),
+              onSelected: (_) {
+                setState(() => speed = s);
+                player.setRate(s);
+                Navigator.pop(ctx);
+              },
+            );
+          }).toList(),
         ),
       ),
     );
   }
 
-  void _showTrackSheet(bool isAudio) {
+  void _showTrackSheet(bool isAud) {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF161722),
@@ -623,25 +664,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(isAudio ? "Audio Track (Hindi / English)" : "Subtitles", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                if (!isAudio)
-                  TextButton.icon(
-                    icon: const Icon(Icons.cloud_download, color: Color(0xFF00E676), size: 18),
-                    label: const Text("Search Online", style: TextStyle(color: Color(0xFF00E676))),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showOnlineSubtitleDialog();
-                    },
-                  )
-              ],
-            ),
+            Text(isAud ? "Audio Track (Hindi / English)" : "Subtitles", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            if (!isAudio)
+            if (!isAud)
               ListTile(
                 title: const Text("Turn OFF Subtitles"),
                 trailing: player.state.track.subtitle == SubtitleTrack.no() ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
@@ -650,14 +676,14 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   Navigator.pop(ctx);
                 },
               ),
-            ...(isAudio ? currentTracks.audio : currentTracks.subtitle).map((t) {
+            ...(isAud ? tracks.audio : tracks.subtitle).map((t) {
               final title = (t as dynamic).title ?? (t as dynamic).language ?? "Track ${(t as dynamic).id}";
-              final isCurrent = isAudio ? player.state.track.audio == t : player.state.track.subtitle == t;
+              final isCurrent = isAud ? player.state.track.audio == t : player.state.track.subtitle == t;
               return ListTile(
                 title: Text(title),
                 trailing: isCurrent ? const Icon(Icons.check, color: Color(0xFF00E676)) : null,
                 onTap: () {
-                  if (isAudio) player.setAudioTrack(t as AudioTrack); else player.setSubtitleTrack(t as SubtitleTrack);
+                  if (isAud) player.setAudioTrack(t as AudioTrack); else player.setSubtitleTrack(t as SubtitleTrack);
                   Navigator.pop(ctx);
                 },
               );
@@ -668,81 +694,26 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     );
   }
 
-  void _showOnlineSubtitleDialog() {
-    final searchCtrl = TextEditingController(text: widget.playlist[currentIndex].title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), ''));
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF171822),
-        title: const Text("Download Subtitles Online", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: searchCtrl,
-              decoration: const InputDecoration(labelText: "Movie / Series Name"),
-            ),
-            const SizedBox(height: 10),
-            const Text("Online search repository connects to auto-load Hindi & English .srt files.", style: TextStyle(fontSize: 11, color: Colors.white54)),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Subtitles fetched and attached!")));
-            },
-            child: const Text("Search & Download", style: TextStyle(color: Colors.black)),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _showMissingFileDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF171822),
-        title: const Text("File Missing or Corrupted", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-        content: const Text("This video file is missing on storage. Would you like to enter a stream / recovery URL to download it?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.pop(context);
-            },
-            child: const Text("Go to Downloader", style: TextStyle(color: Colors.black)),
-          )
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentItem = widget.playlist[currentIndex];
+    final cur = widget.playlist[currentIndex];
     final screenW = MediaQuery.of(context).size.width;
 
-    if (isFloatingPip) {
+    if (isPip) {
       return Scaffold(
         backgroundColor: Colors.transparent,
         body: Stack(
           children: [
             Positioned(
-              left: pipOffset.dx,
-              top: pipOffset.dy,
+              left: pipOff.dx,
+              top: pipOff.dy,
               child: GestureDetector(
-                onPanUpdate: (d) => setState(() => pipOffset += d.delta),
+                onPanUpdate: (d) => setState(() => pipOff += d.delta),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    width: 200,
-                    height: 115,
+                    width: 210,
+                    height: 120,
                     color: Colors.black,
                     child: Stack(
                       children: [
@@ -750,8 +721,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                         Positioned(
                           right: 4, top: 4,
                           child: GestureDetector(
-                            onTap: () => setState(() => isFloatingPip = false),
-                            child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 20),
+                            onTap: () => setState(() => isPip = false),
+                            child: const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 22),
                           ),
                         ),
                       ],
@@ -768,31 +739,31 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTap: () { if (!isLocked) setState(() => controlsVisible = !controlsVisible); },
+        onTap: () { if (!isLocked) setState(() => controls = !controls); },
         onVerticalDragUpdate: isLocked ? null : (details) {
           final isLeft = details.globalPosition.dx < (screenW / 2);
           final delta = -details.primaryDelta! / 200.0;
           setState(() {
-            showGesture = true;
+            showHud = true;
             if (isLeft) {
-              gestureName = "Brightness";
-              brightness = (brightness + delta).clamp(0.05, 1.0);
-              gestureVal = brightness * 100;
+              hudName = "Brightness";
+              bright = (bright + delta).clamp(0.05, 1.0);
+              hudVal = bright * 100;
             } else {
-              gestureName = "Volume";
-              volume = (volume + delta).clamp(0.0, 1.0);
-              gestureVal = volume * 100;
-              player.setVolume(gestureVal);
+              hudName = "Volume";
+              vol = (vol + delta).clamp(0.0, 1.0);
+              hudVal = vol * 100;
+              player.setVolume(hudVal);
             }
           });
         },
-        onVerticalDragEnd: (_) => Future.delayed(const Duration(milliseconds: 700), () => setState(() => showGesture = false)),
+        onVerticalDragEnd: (_) => Future.delayed(const Duration(milliseconds: 600), () => setState(() => showHud = false)),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (currentItem.isVideo)
+            if (cur.isVideo)
               InteractiveViewer(
-                transformationController: _transformController,
+                transformationController: _zoomCtrl,
                 minScale: 1.0,
                 maxScale: 4.0,
                 scaleEnabled: !isLocked,
@@ -804,43 +775,42 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      width: 180,
-                      height: 180,
+                      width: 170,
+                      height: 170,
                       decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF1E1F2B)),
-                      child: const Icon(Icons.music_note_rounded, color: Color(0xFF00E676), size: 70),
+                      child: const Icon(Icons.music_note_rounded, color: Color(0xFF00E676), size: 65),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Text(currentItem.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      child: Text(cur.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
               ),
 
-            if (showGesture && !isLocked)
+            if (showHud && !isLocked)
               Center(
                 child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-                  child: Text("$gestureName: ${gestureVal.toInt()}%", style: const TextStyle(fontSize: 16, color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10)),
+                  child: Text("$hudName: ${hudVal.toInt()}%", style: const TextStyle(fontSize: 16, color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
                 ),
               ),
 
-            // Screen Lock Indicator & Unlock Button
             if (isLocked)
               Positioned(
                 left: 20, top: 40,
                 child: IconButton(
-                  icon: const Icon(Icons.lock, color: Colors.redAccent, size: 30),
+                  icon: const Icon(Icons.lock, color: Colors.redAccent, size: 28),
                   onPressed: () => setState(() => isLocked = false),
                 ),
               ),
 
-            if (controlsVisible && !isLocked) ...[
-              // Side Control Buttons
+            if (controls && !isLocked) ...[
+              // Left control buttons
               Positioned(
-                left: 12, top: 110,
+                left: 10, top: 110,
                 child: Column(
                   children: [
                     IconButton(
@@ -862,11 +832,12 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   ],
                 ),
               ),
+              // PiP Button
               Positioned(
-                right: 12, top: 110,
+                right: 10, top: 110,
                 child: IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt, color: Color(0xFF00E676)),
-                  onPressed: () => setState(() => isFloatingPip = true),
+                  onPressed: () => setState(() => isPip = true),
                 ),
               ),
 
@@ -877,10 +848,10 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                   backgroundColor: Colors.black54,
                   elevation: 0,
                   leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-                  title: Text(currentItem.title, style: const TextStyle(fontSize: 14)),
+                  title: Text(cur.title, style: const TextStyle(fontSize: 13.5)),
                   actions: [
-                    if (currentItem.isVideo) ...[
-                      IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio Track", onPressed: () => _showTrackSheet(true)),
+                    if (cur.isVideo) ...[
+                      IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio", onPressed: () => _showTrackSheet(true)),
                       IconButton(icon: const Icon(Icons.subtitles), tooltip: "Subtitles", onPressed: () => _showTrackSheet(false)),
                     ]
                   ],
@@ -897,8 +868,8 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Slider(
-                        value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
-                        max: duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0,
+                        value: pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble(),
+                        max: dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1.0,
                         activeColor: const Color(0xFF00E676),
                         onChanged: (v) => player.seek(Duration(milliseconds: v.toInt())),
                       ),
@@ -907,7 +878,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                         children: [
                           IconButton(
                             icon: const Icon(Icons.skip_previous, size: 28),
-                            onPressed: () { if (currentIndex > 0) _openMedia(currentIndex - 1); },
+                            onPressed: () { if (currentIndex > 0) _playIndex(currentIndex - 1); },
                           ),
                           IconButton(
                             icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 40, color: const Color(0xFF00E676)),
@@ -915,7 +886,7 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with TickerProvid
                           ),
                           IconButton(
                             icon: const Icon(Icons.skip_next, size: 28),
-                            onPressed: () { if (currentIndex + 1 < widget.playlist.length) _openMedia(currentIndex + 1); },
+                            onPressed: () { if (currentIndex + 1 < widget.playlist.length) _playIndex(currentIndex + 1); },
                           ),
                         ],
                       )
