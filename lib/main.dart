@@ -613,15 +613,15 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
   void _applyAudioMode(String mode) {
     setState(() => currentAudioMode = mode);
     if (mode == "8D Audio Surround") {
-      player.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
+      (player.platform as dynamic)?.setProperty('af', 'stereowiden=2.5,apulsator=hz=0.125:amount=1');
     } else if (mode == "16D Spatial") {
-      player.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
+      (player.platform as dynamic)?.setProperty('af', 'stereowiden=3.5,apulsator=hz=0.25:amount=1,aecho=0.8:0.9:500:0.3');
     } else if (mode == "Dolby Atmos Bass") {
-      player.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
+      (player.platform as dynamic)?.setProperty('af', 'firequalizer=gain=\'if(lte(f,120),6,if(gte(f,8000),4,0))\',bass=g=8');
     } else if (mode == "Lofi Chill Bass") {
-      player.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
+      (player.platform as dynamic)?.setProperty('af', 'lowpass=f=3200,volume=1.2,bass=g=5');
     } else {
-      player.setProperty('af', '');
+      (player.platform as dynamic)?.setProperty('af', '');
     }
   }
 
