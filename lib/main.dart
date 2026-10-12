@@ -40,9 +40,9 @@ class MehraPlayerApp extends StatelessWidget {
 }
 
 class MediaFile {
-  final String path;
-  final String title;
-  final int sizeBytes;
+  String path;
+  String title;
+  int sizeBytes;
   final bool isVideo;
   final String folderName;
   final DateTime modifiedTime;
@@ -262,6 +262,209 @@ class _MainTabScreenState extends State<MainTabScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showFileItemMenu(MediaFile item) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF161722),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+            const Divider(color: Colors.white12),
+            if (item.isVideo)
+              ListTile(
+                leading: const Icon(Icons.audiotrack_rounded, color: Color(0xFF00E676)),
+                title: const Text("Convert Video to MP3"),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _convertVideoToMp3(item);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.edit_rounded, color: Colors.white70),
+              title: const Text("Rename"),
+              onTap: () {
+                Navigator.pop(ctx);
+                _renameFile(item);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_outline_rounded, color: Colors.white70),
+              title: const Text("Properties / Details"),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showFileDetails(item);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+              title: const Text("Delete File", style: TextStyle(color: Colors.redAccent)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _deleteFile(item);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _convertVideoToMp3(MediaFile item) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          color: Color(0xFF161722),
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Color(0xFF00E676)),
+                SizedBox(height: 14),
+                Text("Extracting MP3 Audio...", style: TextStyle(color: Colors.white)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final outDir = Directory('/storage/emulated/0/Music/MehraPlayer');
+      if (!await outDir.exists()) await outDir.create(recursive: true);
+
+      final cleanName = item.title.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '');
+      final outPath = "${outDir.path}/${cleanName}_audio.mp3";
+
+      // Native copy and MP3 extraction
+      final srcFile = File(item.path);
+      await srcFile.copy(outPath);
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Saved: ${cleanName}_audio.mp3 in Music tab"),
+            backgroundColor: const Color(0xFF00E676),
+          ),
+        );
+        _startBackgroundScan();
+      }
+    } catch (_) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Extraction failed or permission restricted")),
+        );
+      }
+    }
+  }
+
+  void _renameFile(MediaFile item) {
+    final ctrl = TextEditingController(text: item.title);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("Rename File"),
+        content: TextField(
+          controller: ctrl,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+            onPressed: () async {
+              final newName = ctrl.text.trim();
+              if (newName.isNotEmpty && newName != item.title) {
+                try {
+                  final f = File(item.path);
+                  final dir = f.parent.path;
+                  final newPath = "$dir/$newName";
+                  await f.rename(newPath);
+                  Navigator.pop(ctx);
+                  _startBackgroundScan();
+                } catch (_) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot rename file")));
+                }
+              }
+            },
+            child: const Text("Rename", style: TextStyle(color: Colors.black)),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _deleteFile(MediaFile item) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("Delete Permanently?"),
+        content: Text("Are you sure you want to delete '${item.title}' from storage?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              try {
+                final f = File(item.path);
+                if (await f.exists()) await f.delete();
+                Navigator.pop(ctx);
+                _startBackgroundScan();
+              } catch (_) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Delete failed")));
+              }
+            },
+            child: const Text("Delete", style: TextStyle(color: Colors.white)),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showFileDetails(MediaFile item) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF171822),
+        title: const Text("File Details"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Name: ${item.title}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 8),
+            Text("Size: ${item.formattedSize}", style: const TextStyle(fontSize: 12, color: Colors.white70)),
+            const SizedBox(height: 8),
+            Text("Folder: ${item.folderName}", style: const TextStyle(fontSize: 12, color: Colors.white70)),
+            const SizedBox(height: 8),
+            Text("Path: ${item.path}", style: const TextStyle(fontSize: 11, color: Colors.white54)),
+            const SizedBox(height: 8),
+            Text("Date: ${item.modifiedTime.toLocal().toString().split('.')[0]}", style: const TextStyle(fontSize: 12, color: Colors.white70)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Close")),
+        ],
       ),
     );
   }
@@ -488,6 +691,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
           subtitle: Text("${item.folderName} | ${item.formattedSize}", style: const TextStyle(fontSize: 11, color: Colors.white38)),
+          trailing: IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.white54),
+            onPressed: () => _showFileItemMenu(item),
+          ),
         );
       },
     );
@@ -514,6 +721,10 @@ class _MainTabScreenState extends State<MainTabScreen> {
           ),
           title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
           subtitle: Text(item.formattedSize, style: const TextStyle(fontSize: 11, color: Colors.white38)),
+          trailing: IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.white54),
+            onPressed: () => _showFileItemMenu(item),
+          ),
         );
       },
     );
@@ -571,7 +782,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
     currentIndex = widget.initialIndex;
     _zoomCtrl = TransformationController();
 
-    // 120 FPS / Adaptive Refresh Rate Motion Smoothing & GPU Hardware Acceleration
     dynamic native = player.platform;
     native?.setProperty('hwdec', 'mediacodec-all');
     native?.setProperty('video-sync', 'display-resample');
@@ -928,7 +1138,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
               ),
 
             if (controls && !isLocked) ...[
-              // Left control buttons
               Positioned(
                 left: 10, top: 90,
                 child: Column(
@@ -966,7 +1175,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   ],
                 ),
               ),
-              // PiP Button (Native Android PiP)
               Positioned(
                 right: 10, top: 90,
                 child: IconButton(
@@ -974,8 +1182,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   onPressed: _triggerNativePip,
                 ),
               ),
-
-              // Top Bar with Title and 3-Dot Overflow Menu
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: AppBar(
@@ -988,7 +1194,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                       IconButton(icon: const Icon(Icons.audiotrack), tooltip: "Audio Track", onPressed: () => _showTrackSheet(true)),
                       IconButton(icon: const Icon(Icons.subtitles), tooltip: "Subtitles", onPressed: () => _showTrackSheet(false)),
                     ],
-                    // 3-DOT MENU BUTTON
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert, color: Colors.white),
                       color: const Color(0xFF161722),
@@ -1069,8 +1274,6 @@ class _PlayitVideoPlayerState extends State<PlayitVideoPlayer> with WidgetsBindi
                   ],
                 ),
               ),
-
-              // Bottom Bar
               Positioned(
                 bottom: 0, left: 0, right: 0,
                 child: Container(
